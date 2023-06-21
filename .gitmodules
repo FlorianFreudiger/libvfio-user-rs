@@ -1,0 +1,3 @@
+[submodule "libvfio-user-sys/libvfio-user"]
+	path = libvfio-user-sys/libvfio-user
+	url = https://github.com/nutanix/libvfio-user.git
