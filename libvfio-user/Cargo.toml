@@ -1,0 +1,13 @@
+[package]
+name = "libvfio-user"
+version = "0.0.1"
+edition = "2021"
+license = "BSD-3-Clause"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libvfio-user-sys = { path = "../libvfio-user-sys" }
+
+anyhow = "1.0.71"
+derive_builder = "0.12.0"
