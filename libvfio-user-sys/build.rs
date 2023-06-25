@@ -44,6 +44,8 @@ fn main() {
         // bindings for.
         .header(header_path_str)
         .allowlist_file(header_path_str)
+        // Parse all comments since some explanations are not doc comments (/* ... */ vs /** ... */)
+        .clang_arg("-fparse-all-comments")
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
