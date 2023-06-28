@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate derive_builder;
 
+use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::io::Error;
 use std::os::raw::{c_char, c_int, c_uint};
@@ -9,6 +10,25 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Context, Result};
 
 use libvfio_user_sys::*;
+
+#[derive(Clone, Debug)]
+pub enum PciType {
+    Pci,
+    PciX1,
+    PciX2,
+    PciExpress,
+}
+
+impl PciType {
+    fn to_vfu_type(&self) -> vfu_dev_type_t {
+        match self {
+            PciType::Pci => vfu_pci_type_t_VFU_PCI_TYPE_CONVENTIONAL,
+            PciType::PciX1 => vfu_pci_type_t_VFU_PCI_TYPE_PCI_X_1,
+            PciType::PciX2 => vfu_pci_type_t_VFU_PCI_TYPE_PCI_X_2,
+            PciType::PciExpress => vfu_pci_type_t_VFU_PCI_TYPE_EXPRESS,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct PciConfig {
@@ -22,7 +42,7 @@ pub struct PciConfig {
     pub revision_id: u8,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct DeviceRegion {
     pub region_type: DeviceRegionKind,
     pub size: usize,
@@ -33,7 +53,7 @@ pub struct DeviceRegion {
     pub memory: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum DeviceRegionKind {
     Bar { bar: u8 },
     Rom,
@@ -61,9 +81,12 @@ impl DeviceRegionKind {
     }
 }
 
-#[derive(Debug, Builder)]
+#[derive(Builder, Debug)]
 #[builder(build_fn(validate = "Self::validate"))]
 pub struct VfuSetup {
+    #[builder(default = "PciType::PciExpress")]
+    pci_type: PciType,
+
     // Path to the socket to be used for communication with the client (e.g. qemu)
     socket_path: PathBuf,
 
@@ -81,13 +104,20 @@ impl VfuSetupBuilder {
     }
 
     fn validate(&self) -> Result<(), String> {
-        // Check there regions are valid
+        // Check if the regions are valid and unique
         if let Some(regions) = &self.device_regions {
+            let mut region_vfu_types = HashSet::new();
             for region in regions {
-                region
+                let vfu_region_type = region
                     .region_type
                     .to_vfu_region_type()
                     .map_err(|e| e.to_string())?;
+
+                if region_vfu_types.contains(&vfu_region_type) {
+                    return Err(format!("Duplicate device region, idx={}", vfu_region_type));
+                }
+
+                region_vfu_types.insert(vfu_region_type);
             }
         }
 
@@ -134,7 +164,7 @@ impl VfuSetup {
     }
 
     unsafe fn setup_pci(&self, ctx: *mut vfu_ctx_t) -> Result<()> {
-        let ret = vfu_pci_init(ctx, vfu_pci_type_t_VFU_PCI_TYPE_EXPRESS, 0, 0);
+        let ret = vfu_pci_init(ctx, self.pci_type.to_vfu_type(), 0, 0);
 
         if ret < 0 {
             let err = Error::last_os_error();
