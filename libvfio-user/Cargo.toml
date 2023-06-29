@@ -7,7 +7,13 @@ license = "BSD-3-Clause"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-libvfio-user-sys = { path = "../libvfio-user-sys" }
+libvfio-user-sys = { path = "../libvfio-user-sys", default-features = false }
 
 anyhow = "1.0.71"
 derive_builder = "0.12.0"
+
+# Passthrough libvfio-user-sys features
+[features]
+default = ["libvfio-user-sys/default"]
+build-static = ["libvfio-user-sys/build-static"]
+build-shared = ["libvfio-user-sys/build-shared"]

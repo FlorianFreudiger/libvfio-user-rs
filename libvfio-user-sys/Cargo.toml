@@ -9,5 +9,11 @@ license = "BSD-3-Clause"
 [build-dependencies]
 bindgen = "0.66.1"
 meson-next = "1.2.2"
+pkg-config = "0.3.27"
 
 [dependencies]
+
+[features]
+default = ["build-static"]
+build-static = []
+build-shared = []
