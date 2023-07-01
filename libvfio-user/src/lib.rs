@@ -3,7 +3,7 @@ extern crate derive_builder;
 
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use std::os::raw::{c_char, c_int, c_uint};
 use std::path::PathBuf;
 
@@ -84,11 +84,16 @@ impl DeviceRegionKind {
 #[derive(Builder, Debug)]
 #[builder(build_fn(validate = "Self::validate"))]
 pub struct VfuSetup {
-    #[builder(default = "PciType::PciExpress")]
-    pci_type: PciType,
-
     // Path to the socket to be used for communication with the client (e.g. qemu)
     socket_path: PathBuf,
+
+    // Run non-blocking, caller must handle waiting/polling for requests itself
+    #[builder(default = "false")]
+    non_blocking: bool,
+
+    // Type of PCI connector the vfio-user client should expose
+    #[builder(default = "PciType::PciExpress")]
+    pci_type: PciType,
 
     // Exposed PCI information
     pci_config: PciConfig,
@@ -132,10 +137,16 @@ impl VfuSetup {
                 .to_str()
                 .context("Path is not valid unicode")?,
         )?;
+        let flags = if self.non_blocking {
+            LIBVFIO_USER_FLAG_ATTACH_NB
+        } else {
+            0
+        } as c_int;
+
         let ctx = vfu_create_ctx(
             vfu_trans_t_VFU_TRANS_SOCK,
             socket_path.as_ptr(),
-            0,
+            flags,
             std::ptr::null_mut(),
             vfu_dev_type_t_VFU_DEV_TYPE_PCI,
         );
@@ -289,5 +300,37 @@ pub struct VfuContext {
 impl VfuContext {
     pub fn raw_ctx(&self) -> *mut vfu_ctx_t {
         self.vfu_ctx
+    }
+
+    // Attach to the transport, if non-blocking it may return None and needs to be called again
+    pub fn attach(&self) -> Result<Option<()>> {
+        unsafe {
+            let ret = vfu_attach_ctx(self.vfu_ctx);
+
+            if ret != 0 {
+                let err = Error::last_os_error();
+
+                return if err.kind() == ErrorKind::WouldBlock {
+                    Ok(None)
+                } else {
+                    Err(anyhow!("Failed to attach device: {}", err))
+                };
+            }
+
+            Ok(Some(()))
+        }
+    }
+
+    pub fn run(&self) -> Result<u32> {
+        unsafe {
+            let ret = vfu_run_ctx(self.vfu_ctx);
+
+            if ret < 0 {
+                let err = Error::last_os_error();
+                return Err(anyhow!("Failed to run device: {}", err));
+            }
+
+            Ok(ret as u32)
+        }
     }
 }
