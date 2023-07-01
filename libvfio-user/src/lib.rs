@@ -82,8 +82,8 @@ impl DeviceRegionKind {
 }
 
 #[derive(Builder, Debug)]
-#[builder(build_fn(validate = "Self::validate"))]
-pub struct VfuSetup {
+#[builder(name = "DeviceConfigurator", build_fn(validate = "Self::validate"))]
+pub struct DeviceConfiguration {
     // Path to the socket to be used for communication with the client (e.g. qemu)
     socket_path: PathBuf,
 
@@ -102,7 +102,7 @@ pub struct VfuSetup {
     device_regions: Vec<DeviceRegion>,
 }
 
-impl VfuSetupBuilder {
+impl DeviceConfigurator {
     pub fn add_device_region(&mut self, region: DeviceRegion) -> &mut Self {
         self.device_regions.get_or_insert(Vec::new()).push(region);
         self
@@ -130,7 +130,7 @@ impl VfuSetupBuilder {
     }
 }
 
-impl VfuSetup {
+impl DeviceConfiguration {
     unsafe fn setup_create_ctx(&self) -> Result<*mut vfu_ctx_t> {
         let socket_path = CString::new(
             self.socket_path
@@ -256,7 +256,7 @@ impl VfuSetup {
         Ok(())
     }
 
-    pub fn setup(&self) -> Result<VfuContext> {
+    pub fn setup(&self) -> Result<DeviceContext> {
         unsafe {
             let ctx = self.setup_create_ctx()?;
             self.setup_log(ctx)?;
@@ -267,7 +267,7 @@ impl VfuSetup {
             // TODO: Callbacks
             self.setup_realize(ctx)?;
 
-            Ok(VfuContext { vfu_ctx: ctx })
+            Ok(DeviceContext { vfu_ctx: ctx })
         }
     }
 }
@@ -293,11 +293,11 @@ unsafe extern "C" fn vfu_region_access_callback(
     0
 }
 
-pub struct VfuContext {
+pub struct DeviceContext {
     vfu_ctx: *mut vfu_ctx_t,
 }
 
-impl VfuContext {
+impl DeviceContext {
     pub fn raw_ctx(&self) -> *mut vfu_ctx_t {
         self.vfu_ctx
     }
