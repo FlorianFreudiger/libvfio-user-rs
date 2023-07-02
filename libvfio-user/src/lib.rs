@@ -345,6 +345,17 @@ impl<T: Device> DeviceContext<T> {
     }
 }
 
+impl<T: Device> Drop for DeviceContext<T> {
+    fn drop(&mut self) {
+        unsafe {
+            match self.vfu_ctx {
+                Some(ctx) => vfu_destroy_ctx(ctx),
+                None => (),
+            }
+        }
+    }
+}
+
 pub trait Device: Default {
     fn log(&self, level: i32, msg: &str);
 }
