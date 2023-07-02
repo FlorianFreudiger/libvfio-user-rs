@@ -2,14 +2,18 @@
 extern crate derive_builder;
 
 use std::collections::HashSet;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::io::{Error, ErrorKind};
-use std::os::raw::{c_char, c_int, c_uint};
+use std::os::raw::{c_char, c_int, c_uint, c_void};
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
 
 use libvfio_user_sys::*;
+
+use crate::callbacks::log_callback;
+
+mod callbacks;
 
 #[derive(Clone, Debug)]
 pub enum PciType {
@@ -131,7 +135,9 @@ impl DeviceConfigurator {
 }
 
 impl DeviceConfiguration {
-    unsafe fn setup_create_ctx(&self) -> Result<*mut vfu_ctx_t> {
+    unsafe fn setup_create_ctx<T: Device>(&self) -> Result<Box<DeviceContext<T>>> {
+        let mut ctx = Box::new(DeviceContext::default());
+
         let socket_path = CString::new(
             self.socket_path
                 .to_str()
@@ -143,24 +149,29 @@ impl DeviceConfiguration {
             0
         } as c_int;
 
-        let ctx = vfu_create_ctx(
+        // Get raw pointer to box contents
+        let ctx_pointer = (&mut *ctx) as *mut DeviceContext<T>;
+
+        let raw_ctx = vfu_create_ctx(
             vfu_trans_t_VFU_TRANS_SOCK,
             socket_path.as_ptr(),
             flags,
-            std::ptr::null_mut(),
+            ctx_pointer as *mut c_void,
             vfu_dev_type_t_VFU_DEV_TYPE_PCI,
         );
 
-        if ctx.is_null() {
+        if raw_ctx.is_null() {
             let err = Error::last_os_error();
             return Err(anyhow!("Failed to create VFIO context: {}", err));
         }
 
+        ctx.vfu_ctx = Some(raw_ctx);
         Ok(ctx)
     }
 
-    unsafe fn setup_log(&self, ctx: *mut vfu_ctx_t) -> Result<()> {
-        let ret = vfu_setup_log(ctx, Some(vfu_log), 0);
+    unsafe fn setup_log<T: Device>(&self, ctx: &DeviceContext<T>) -> Result<()> {
+        let raw_ctx = ctx.raw_ctx();
+        let ret = vfu_setup_log(raw_ctx, Some(log_callback::<T>), 0);
 
         if ret < 0 {
             let err = Error::last_os_error();
@@ -169,13 +180,14 @@ impl DeviceConfiguration {
 
         // Test log
         //let msg = CString::new("test").unwrap();
-        //vfu_log(ctx, 0, msg.as_ptr());
+        //vfu_log(raw_ctx, 0, msg.as_ptr());
 
         Ok(())
     }
 
-    unsafe fn setup_pci(&self, ctx: *mut vfu_ctx_t) -> Result<()> {
-        let ret = vfu_pci_init(ctx, self.pci_type.to_vfu_type(), 0, 0);
+    unsafe fn setup_pci<T: Device>(&self, ctx: &DeviceContext<T>) -> Result<()> {
+        let raw_ctx = ctx.raw_ctx();
+        let ret = vfu_pci_init(raw_ctx, self.pci_type.to_vfu_type(), 0, 0);
 
         if ret < 0 {
             let err = Error::last_os_error();
@@ -183,7 +195,7 @@ impl DeviceConfiguration {
         }
 
         vfu_pci_set_id(
-            ctx,
+            raw_ctx,
             self.pci_config.vendor_id,
             self.pci_config.device_id,
             self.pci_config.subsystem_vendor_id,
@@ -191,20 +203,21 @@ impl DeviceConfiguration {
         );
 
         vfu_pci_set_class(
-            ctx,
+            raw_ctx,
             self.pci_config.class_code_base,
             self.pci_config.class_code_subclass,
             self.pci_config.class_code_programming_interface,
         );
 
         // Set other pci fields directly since libvfio-user does not provide functions for them
-        let config_space = vfu_pci_get_config_space(ctx).as_mut().unwrap();
+        let config_space = vfu_pci_get_config_space(raw_ctx).as_mut().unwrap();
         config_space.__bindgen_anon_1.hdr.__bindgen_anon_1.rid = self.pci_config.revision_id;
 
         Ok(())
     }
 
-    unsafe fn setup_device_regions(&self, ctx: *mut vfu_ctx_t) -> Result<()> {
+    unsafe fn setup_device_regions<T: Device>(&self, ctx: &DeviceContext<T>) -> Result<()> {
+        let raw_ctx = ctx.raw_ctx();
         for region in &self.device_regions {
             let region_idx = region.region_type.to_vfu_region_type()?;
 
@@ -225,7 +238,7 @@ impl DeviceConfiguration {
             }
 
             let ret = vfu_setup_region(
-                ctx,
+                raw_ctx,
                 region_idx,
                 region.size,
                 Some(vfu_region_access_callback), // TODO: Allow custom callbacks
@@ -245,8 +258,9 @@ impl DeviceConfiguration {
         Ok(())
     }
 
-    unsafe fn setup_realize(&self, ctx: *mut vfu_ctx_t) -> Result<()> {
-        let ret = vfu_realize_ctx(ctx);
+    unsafe fn setup_realize<T: Device>(&self, ctx: &DeviceContext<T>) -> Result<()> {
+        let raw_ctx = ctx.raw_ctx();
+        let ret = vfu_realize_ctx(raw_ctx);
 
         if ret != 0 {
             let err = Error::last_os_error();
@@ -256,26 +270,20 @@ impl DeviceConfiguration {
         Ok(())
     }
 
-    pub fn setup(&self) -> Result<DeviceContext> {
+    pub fn setup<T: Device>(&self) -> Result<Box<DeviceContext<T>>> {
         unsafe {
             let ctx = self.setup_create_ctx()?;
-            self.setup_log(ctx)?;
-            self.setup_pci(ctx)?;
-            self.setup_device_regions(ctx)?;
+            self.setup_log(&ctx)?;
+            self.setup_pci(&ctx)?;
+            self.setup_device_regions(&ctx)?;
             // TODO: Interrupts
             // TODO: Capabilities
             // TODO: Callbacks
-            self.setup_realize(ctx)?;
+            self.setup_realize(&ctx)?;
 
-            Ok(DeviceContext { vfu_ctx: ctx })
+            Ok(ctx)
         }
     }
-}
-
-// TODO: Allow custom logging
-extern "C" fn vfu_log(vfu_ctx: *mut vfu_ctx_t, level: c_int, msg: *const c_char) {
-    let msg = unsafe { CStr::from_ptr(msg) };
-    println!("log: {:?} - level {:?}: {:?}", vfu_ctx, level, msg);
 }
 
 unsafe extern "C" fn vfu_region_access_callback(
@@ -293,19 +301,21 @@ unsafe extern "C" fn vfu_region_access_callback(
     0
 }
 
-pub struct DeviceContext {
-    vfu_ctx: *mut vfu_ctx_t,
+#[derive(Default)]
+pub struct DeviceContext<T: Device> {
+    vfu_ctx: Option<*mut vfu_ctx_t>,
+    device: T,
 }
 
-impl DeviceContext {
+impl<T: Device> DeviceContext<T> {
     pub fn raw_ctx(&self) -> *mut vfu_ctx_t {
-        self.vfu_ctx
+        self.vfu_ctx.unwrap()
     }
 
     // Attach to the transport, if non-blocking it may return None and needs to be called again
     pub fn attach(&self) -> Result<Option<()>> {
         unsafe {
-            let ret = vfu_attach_ctx(self.vfu_ctx);
+            let ret = vfu_attach_ctx(self.vfu_ctx.unwrap());
 
             if ret != 0 {
                 let err = Error::last_os_error();
@@ -323,7 +333,7 @@ impl DeviceContext {
 
     pub fn run(&self) -> Result<u32> {
         unsafe {
-            let ret = vfu_run_ctx(self.vfu_ctx);
+            let ret = vfu_run_ctx(self.vfu_ctx.unwrap());
 
             if ret < 0 {
                 let err = Error::last_os_error();
@@ -333,4 +343,8 @@ impl DeviceContext {
             Ok(ret as u32)
         }
     }
+}
+
+pub trait Device: Default {
+    fn log(&self, level: i32, msg: &str);
 }
