@@ -96,7 +96,7 @@ pub struct DeviceConfiguration {
     non_blocking: bool,
 
     // Type of PCI connector the vfio-user client should expose
-    #[builder(default = "PciType::PciExpress")]
+    #[builder(default = "PciType::Pci")]
     pci_type: PciType,
 
     // Exposed PCI information
@@ -171,7 +171,7 @@ impl DeviceConfiguration {
 
     unsafe fn setup_log<T: Device>(&self, ctx: &DeviceContext<T>) -> Result<()> {
         let raw_ctx = ctx.raw_ctx();
-        let ret = vfu_setup_log(raw_ctx, Some(log_callback::<T>), 0);
+        let ret = vfu_setup_log(raw_ctx, Some(log_callback::<T>), 7);
 
         if ret < 0 {
             let err = Error::last_os_error();
