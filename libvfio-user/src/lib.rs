@@ -4,14 +4,14 @@ extern crate derive_builder;
 use std::collections::HashSet;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
-use std::os::raw::{c_char, c_int, c_uint, c_void};
+use std::os::raw::{c_int, c_uint, c_void};
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
 
 use libvfio_user_sys::*;
 
-use crate::callbacks::log_callback;
+use crate::callbacks::*;
 
 mod callbacks;
 
@@ -237,11 +237,13 @@ impl DeviceConfiguration {
                 }
             }
 
+            let callback = region.region_type.get_region_access_callback_fn::<T>();
+
             let ret = vfu_setup_region(
                 raw_ctx,
                 region_idx,
                 region.size,
-                Some(vfu_region_access_callback), // TODO: Allow custom callbacks
+                Some(callback), // TODO: Allow custom callbacks
                 flags as c_int,
                 std::ptr::null_mut(), // TODO: Allow mappings
                 0,
@@ -284,21 +286,6 @@ impl DeviceConfiguration {
             Ok(ctx)
         }
     }
-}
-
-unsafe extern "C" fn vfu_region_access_callback(
-    vfu_ctx: *mut vfu_ctx_t,
-    buf: *mut c_char,
-    count: usize,
-    offset: loff_t,
-    is_write: bool,
-) -> isize {
-    println!(
-        "vfu_region_access_callback: {:?} - buf:{:?} - count:{:?} - offset:{:?} - write:{:?}",
-        vfu_ctx, buf, count, offset, is_write
-    );
-
-    0
 }
 
 #[derive(Default)]
@@ -358,4 +345,55 @@ impl<T: Device> Drop for DeviceContext<T> {
 
 pub trait Device: Default {
     fn log(&self, level: i32, msg: &str);
+
+    // TODO: Should these be combined into a single function with a region type?
+    #[allow(unused_variables)]
+    fn region_access_bar0(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+        unimplemented!()
+    }
+
+    #[allow(unused_variables)]
+    fn region_access_bar1(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+        unimplemented!()
+    }
+
+    #[allow(unused_variables)]
+    fn region_access_bar2(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+        unimplemented!()
+    }
+
+    #[allow(unused_variables)]
+    fn region_access_bar3(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+        unimplemented!()
+    }
+
+    #[allow(unused_variables)]
+    fn region_access_bar4(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+        unimplemented!()
+    }
+
+    #[allow(unused_variables)]
+    fn region_access_bar5(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+        unimplemented!()
+    }
+
+    #[allow(unused_variables)]
+    fn region_access_rom(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+        unimplemented!()
+    }
+
+    #[allow(unused_variables)]
+    fn region_access_cfg(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+        unimplemented!()
+    }
+
+    #[allow(unused_variables)]
+    fn region_access_vga(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+        unimplemented!()
+    }
+
+    #[allow(unused_variables)]
+    fn region_access_mig(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+        unimplemented!()
+    }
 }
