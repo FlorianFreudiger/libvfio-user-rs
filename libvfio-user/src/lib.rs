@@ -89,6 +89,13 @@ impl DeviceRegionKind {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum DeviceResetReason {
+    ClientRequest,
+    LostConnection,
+    PciReset,
+}
+
 #[derive(Builder, Debug)]
 #[builder(name = "DeviceConfigurator", build_fn(validate = "Self::validate"))]
 pub struct DeviceConfiguration {
@@ -261,6 +268,20 @@ impl DeviceConfiguration {
         Ok(())
     }
 
+    unsafe fn setup_other_callbacks<T: Device>(&self, ctx: &DeviceContext<T>) -> Result<()> {
+        let raw_ctx = ctx.raw_ctx();
+
+        let ret = vfu_setup_device_reset_cb(raw_ctx, Some(reset_callback::<T>));
+        if ret != 0 {
+            let err = Error::last_os_error();
+            return Err(anyhow!("Failed to setup device reset callback: {}", err));
+        }
+
+        // TODO: Other callbacks
+
+        Ok(())
+    }
+
     unsafe fn setup_realize<T: Device>(&self, ctx: &DeviceContext<T>) -> Result<()> {
         let raw_ctx = ctx.raw_ctx();
         let ret = vfu_realize_ctx(raw_ctx);
@@ -281,7 +302,7 @@ impl DeviceConfiguration {
             self.setup_device_regions(&ctx)?;
             // TODO: Interrupts
             // TODO: Capabilities
-            // TODO: Callbacks
+            self.setup_other_callbacks(&ctx)?;
             self.setup_realize(&ctx)?;
 
             Ok(ctx)
@@ -347,6 +368,8 @@ impl<T: Device> Drop for DeviceContext<T> {
 #[allow(unused_variables)]
 pub trait Device: Default {
     fn log(&self, level: i32, msg: &str);
+
+    fn reset(&mut self, reason: DeviceResetReason) -> Result<(), i32>;
 
     fn region_access_bar0(
         &mut self, offset: usize, data: &mut [u8], write: bool,

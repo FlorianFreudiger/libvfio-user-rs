@@ -6,7 +6,7 @@ use errno::{set_errno, Errno};
 
 use libvfio_user_sys::*;
 
-use crate::{Device, DeviceContext, DeviceRegionKind};
+use crate::{Device, DeviceContext, DeviceRegionKind, DeviceResetReason};
 
 // Use macro to avoid having to specify a lifetime
 macro_rules! device_context_from_vfu_ctx {
@@ -82,4 +82,21 @@ pub(crate) unsafe extern "C" fn region_access_callback<T: Device, const R: u8>(
             -1
         }
     }
+}
+
+pub(crate) unsafe extern "C" fn reset_callback<T: Device>(
+    vfu_ctx: *mut vfu_ctx_t, reset_type: vfu_reset_type_t,
+) -> c_int {
+    let device_context = device_context_from_vfu_ctx!(vfu_ctx);
+
+    let reason = match reset_type {
+        x if x == vfu_reset_type_VFU_RESET_DEVICE => DeviceResetReason::ClientRequest,
+        x if x == vfu_reset_type_VFU_RESET_LOST_CONN => DeviceResetReason::LostConnection,
+        x if x == vfu_reset_type_VFU_RESET_PCI_FLR => DeviceResetReason::PciReset,
+        _ => {
+            unreachable!("Invalid reset type")
+        }
+    };
+
+    device_context.device.reset(reason).err().unwrap_or(0)
 }
