@@ -1,9 +1,7 @@
 #[macro_use]
 extern crate derive_builder;
 
-use std::collections::HashSet;
 use std::io::{Error, ErrorKind};
-use std::os::raw::c_int;
 use std::path::PathBuf;
 
 use anyhow::anyhow;
@@ -69,24 +67,6 @@ pub enum DeviceRegionKind {
     Migration,
 }
 
-impl DeviceRegionKind {
-    fn to_vfu_region_type(&self) -> c_int {
-        let region_idx = match self {
-            DeviceRegionKind::Bar0 => VFU_PCI_DEV_BAR0_REGION_IDX,
-            DeviceRegionKind::Bar1 => VFU_PCI_DEV_BAR1_REGION_IDX,
-            DeviceRegionKind::Bar2 => VFU_PCI_DEV_BAR2_REGION_IDX,
-            DeviceRegionKind::Bar3 => VFU_PCI_DEV_BAR3_REGION_IDX,
-            DeviceRegionKind::Bar4 => VFU_PCI_DEV_BAR4_REGION_IDX,
-            DeviceRegionKind::Bar5 => VFU_PCI_DEV_BAR5_REGION_IDX,
-            DeviceRegionKind::Rom => VFU_PCI_DEV_ROM_REGION_IDX,
-            DeviceRegionKind::Config { .. } => VFU_PCI_DEV_CFG_REGION_IDX,
-            DeviceRegionKind::Vga => VFU_PCI_DEV_VGA_REGION_IDX,
-            DeviceRegionKind::Migration => VFU_PCI_DEV_MIGR_REGION_IDX,
-        };
-        region_idx as c_int
-    }
-}
-
 #[derive(Clone, Debug)]
 pub enum DeviceResetReason {
     ClientRequest,
@@ -120,23 +100,11 @@ impl DeviceConfigurator {
         self.device_regions.get_or_insert(Vec::new()).push(region);
         self
     }
+}
 
-    fn validate(&self) -> Result<(), String> {
-        // Check if the regions are valid and unique
-        if let Some(regions) = &self.device_regions {
-            let mut region_vfu_types = HashSet::new();
-            for region in regions {
-                let vfu_region_type = region.region_type.to_vfu_region_type();
-
-                if region_vfu_types.contains(&vfu_region_type) {
-                    return Err(format!("Duplicate device region, idx={}", vfu_region_type));
-                }
-
-                region_vfu_types.insert(vfu_region_type);
-            }
-        }
-
-        Ok(())
+impl DeviceConfiguration {
+    pub fn produce<T: Device>(&self) -> anyhow::Result<Box<DeviceContext<T>>> {
+        unsafe { self.setup_all() }
     }
 }
 

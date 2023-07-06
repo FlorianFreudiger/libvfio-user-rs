@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::ffi::CString;
 use std::io::Error;
 use std::os::raw::{c_int, c_void};
@@ -7,7 +8,45 @@ use anyhow::{anyhow, Context, Result};
 use libvfio_user_sys::*;
 
 use crate::callbacks::*;
-use crate::{Device, DeviceConfiguration, DeviceContext, DeviceRegionKind};
+use crate::{Device, DeviceConfiguration, DeviceConfigurator, DeviceContext, DeviceRegionKind};
+
+impl DeviceRegionKind {
+    pub(crate) fn to_vfu_region_type(&self) -> c_int {
+        let region_idx = match self {
+            DeviceRegionKind::Bar0 => VFU_PCI_DEV_BAR0_REGION_IDX,
+            DeviceRegionKind::Bar1 => VFU_PCI_DEV_BAR1_REGION_IDX,
+            DeviceRegionKind::Bar2 => VFU_PCI_DEV_BAR2_REGION_IDX,
+            DeviceRegionKind::Bar3 => VFU_PCI_DEV_BAR3_REGION_IDX,
+            DeviceRegionKind::Bar4 => VFU_PCI_DEV_BAR4_REGION_IDX,
+            DeviceRegionKind::Bar5 => VFU_PCI_DEV_BAR5_REGION_IDX,
+            DeviceRegionKind::Rom => VFU_PCI_DEV_ROM_REGION_IDX,
+            DeviceRegionKind::Config { .. } => VFU_PCI_DEV_CFG_REGION_IDX,
+            DeviceRegionKind::Vga => VFU_PCI_DEV_VGA_REGION_IDX,
+            DeviceRegionKind::Migration => VFU_PCI_DEV_MIGR_REGION_IDX,
+        };
+        region_idx as c_int
+    }
+}
+
+impl DeviceConfigurator {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        // Check if the regions are valid and unique
+        if let Some(regions) = &self.device_regions {
+            let mut region_vfu_types = HashSet::new();
+            for region in regions {
+                let vfu_region_type = region.region_type.to_vfu_region_type();
+
+                if region_vfu_types.contains(&vfu_region_type) {
+                    return Err(format!("Duplicate device region, idx={}", vfu_region_type));
+                }
+
+                region_vfu_types.insert(vfu_region_type);
+            }
+        }
+
+        Ok(())
+    }
+}
 
 impl DeviceConfiguration {
     unsafe fn setup_create_ctx<T: Device>(&self) -> Result<Box<DeviceContext<T>>> {
@@ -161,18 +200,16 @@ impl DeviceConfiguration {
         Ok(())
     }
 
-    pub fn setup<T: Device>(&self) -> Result<Box<DeviceContext<T>>> {
-        unsafe {
-            let ctx = self.setup_create_ctx()?;
-            self.setup_log(&ctx)?;
-            self.setup_pci(&ctx)?;
-            self.setup_device_regions(&ctx)?;
-            // TODO: Interrupts
-            // TODO: Capabilities
-            self.setup_other_callbacks(&ctx)?;
-            self.setup_realize(&ctx)?;
+    pub(crate) unsafe fn setup_all<T: Device>(&self) -> Result<Box<DeviceContext<T>>> {
+        let ctx = self.setup_create_ctx()?;
+        self.setup_log(&ctx)?;
+        self.setup_pci(&ctx)?;
+        self.setup_device_regions(&ctx)?;
+        // TODO: Interrupts
+        // TODO: Capabilities
+        self.setup_other_callbacks(&ctx)?;
+        self.setup_realize(&ctx)?;
 
-            Ok(ctx)
-        }
+        Ok(ctx)
     }
 }
