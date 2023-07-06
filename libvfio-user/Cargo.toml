@@ -11,6 +11,7 @@ libvfio-user-sys = { path = "../libvfio-user-sys", default-features = false }
 
 anyhow = "1.0.71"
 derive_builder = "0.12.0"
+errno = "0.3.1"
 
 # Passthrough libvfio-user-sys features
 [features]

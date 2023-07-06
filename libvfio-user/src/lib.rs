@@ -4,7 +4,7 @@ extern crate derive_builder;
 use std::collections::HashSet;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
-use std::os::raw::{c_int, c_uint, c_void};
+use std::os::raw::{c_int, c_void};
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
@@ -59,7 +59,12 @@ pub struct DeviceRegion {
 
 #[derive(Clone, Debug)]
 pub enum DeviceRegionKind {
-    Bar { bar: u8 },
+    Bar0,
+    Bar1,
+    Bar2,
+    Bar3,
+    Bar4,
+    Bar5,
     Rom,
     Config { always_callback: bool },
     Vga,
@@ -67,21 +72,20 @@ pub enum DeviceRegionKind {
 }
 
 impl DeviceRegionKind {
-    fn to_vfu_region_type(&self) -> Result<c_int> {
+    fn to_vfu_region_type(&self) -> c_int {
         let region_idx = match self {
-            DeviceRegionKind::Bar { bar } => {
-                if *bar > 5 {
-                    return Err(anyhow!("Invalid BAR number: {}", bar));
-                }
-
-                *bar as c_uint
-            }
+            DeviceRegionKind::Bar0 => VFU_PCI_DEV_BAR0_REGION_IDX,
+            DeviceRegionKind::Bar1 => VFU_PCI_DEV_BAR1_REGION_IDX,
+            DeviceRegionKind::Bar2 => VFU_PCI_DEV_BAR2_REGION_IDX,
+            DeviceRegionKind::Bar3 => VFU_PCI_DEV_BAR3_REGION_IDX,
+            DeviceRegionKind::Bar4 => VFU_PCI_DEV_BAR4_REGION_IDX,
+            DeviceRegionKind::Bar5 => VFU_PCI_DEV_BAR5_REGION_IDX,
             DeviceRegionKind::Rom => VFU_PCI_DEV_ROM_REGION_IDX,
             DeviceRegionKind::Config { .. } => VFU_PCI_DEV_CFG_REGION_IDX,
             DeviceRegionKind::Vga => VFU_PCI_DEV_VGA_REGION_IDX,
             DeviceRegionKind::Migration => VFU_PCI_DEV_MIGR_REGION_IDX,
         };
-        Ok(region_idx as c_int)
+        region_idx as c_int
     }
 }
 
@@ -117,10 +121,7 @@ impl DeviceConfigurator {
         if let Some(regions) = &self.device_regions {
             let mut region_vfu_types = HashSet::new();
             for region in regions {
-                let vfu_region_type = region
-                    .region_type
-                    .to_vfu_region_type()
-                    .map_err(|e| e.to_string())?;
+                let vfu_region_type = region.region_type.to_vfu_region_type();
 
                 if region_vfu_types.contains(&vfu_region_type) {
                     return Err(format!("Duplicate device region, idx={}", vfu_region_type));
@@ -219,7 +220,7 @@ impl DeviceConfiguration {
     unsafe fn setup_device_regions<T: Device>(&self, ctx: &DeviceContext<T>) -> Result<()> {
         let raw_ctx = ctx.raw_ctx();
         for region in &self.device_regions {
-            let region_idx = region.region_type.to_vfu_region_type()?;
+            let region_idx = region.region_type.to_vfu_region_type();
 
             let mut flags = 0;
             if region.read {
@@ -243,7 +244,7 @@ impl DeviceConfiguration {
                 raw_ctx,
                 region_idx,
                 region.size,
-                Some(callback), // TODO: Allow custom callbacks
+                Some(callback),
                 flags as c_int,
                 std::ptr::null_mut(), // TODO: Allow mappings
                 0,
@@ -343,57 +344,67 @@ impl<T: Device> Drop for DeviceContext<T> {
     }
 }
 
+#[allow(unused_variables)]
 pub trait Device: Default {
     fn log(&self, level: i32, msg: &str);
 
-    // TODO: Should these be combined into a single function with a region type?
-    #[allow(unused_variables)]
-    fn region_access_bar0(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+    fn region_access_bar0(
+        &mut self, offset: usize, data: &mut [u8], write: bool,
+    ) -> Result<usize, i32> {
         unimplemented!()
     }
 
-    #[allow(unused_variables)]
-    fn region_access_bar1(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+    fn region_access_bar1(
+        &mut self, offset: usize, data: &mut [u8], write: bool,
+    ) -> Result<usize, i32> {
         unimplemented!()
     }
 
-    #[allow(unused_variables)]
-    fn region_access_bar2(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+    fn region_access_bar2(
+        &mut self, offset: usize, data: &mut [u8], write: bool,
+    ) -> Result<usize, i32> {
         unimplemented!()
     }
 
-    #[allow(unused_variables)]
-    fn region_access_bar3(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+    fn region_access_bar3(
+        &mut self, offset: usize, data: &mut [u8], write: bool,
+    ) -> Result<usize, i32> {
         unimplemented!()
     }
 
-    #[allow(unused_variables)]
-    fn region_access_bar4(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+    fn region_access_bar4(
+        &mut self, offset: usize, data: &mut [u8], write: bool,
+    ) -> Result<usize, i32> {
         unimplemented!()
     }
 
-    #[allow(unused_variables)]
-    fn region_access_bar5(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+    fn region_access_bar5(
+        &mut self, offset: usize, data: &mut [u8], write: bool,
+    ) -> Result<usize, i32> {
         unimplemented!()
     }
 
-    #[allow(unused_variables)]
-    fn region_access_rom(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+    fn region_access_rom(
+        &mut self, offset: usize, data: &mut [u8], write: bool,
+    ) -> Result<usize, i32> {
         unimplemented!()
     }
 
-    #[allow(unused_variables)]
-    fn region_access_cfg(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+    fn region_access_config(
+        &mut self, offset: usize, data: &mut [u8], write: bool,
+    ) -> Result<usize, i32> {
         unimplemented!()
     }
 
-    #[allow(unused_variables)]
-    fn region_access_vga(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+    fn region_access_vga(
+        &mut self, offset: usize, data: &mut [u8], write: bool,
+    ) -> Result<usize, i32> {
         unimplemented!()
     }
 
-    #[allow(unused_variables)]
-    fn region_access_mig(&self, offset: usize, data: &mut [u8], write: bool) -> Result<usize> {
+    fn region_access_migration(
+        &mut self, offset: usize, data: &mut [u8], write: bool,
+    ) -> Result<usize, i32> {
         unimplemented!()
     }
 }
