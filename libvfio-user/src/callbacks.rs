@@ -15,9 +15,7 @@ macro_rules! device_context_from_vfu_ctx {
 }
 
 pub(crate) unsafe extern "C" fn log_callback<T: Device>(
-    vfu_ctx: *mut vfu_ctx_t,
-    level: c_int,
-    msg: *const c_char,
+    vfu_ctx: *mut vfu_ctx_t, level: c_int, msg: *const c_char,
 ) {
     let device_context = device_context_from_vfu_ctx!(vfu_ctx);
     let msg = unsafe { CStr::from_ptr(msg) };
@@ -54,11 +52,7 @@ impl DeviceRegionKind {
 }
 
 pub(crate) unsafe extern "C" fn region_access_callback<T: Device, const R: u8>(
-    vfu_ctx: *mut vfu_ctx_t,
-    buf: *mut c_char,
-    count: usize,
-    offset: loff_t,
-    is_write: bool,
+    vfu_ctx: *mut vfu_ctx_t, buf: *mut c_char, count: usize, offset: loff_t, is_write: bool,
 ) -> isize {
     let device_context = device_context_from_vfu_ctx!(vfu_ctx);
     let device = &mut device_context.device;
