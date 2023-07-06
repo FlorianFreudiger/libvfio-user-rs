@@ -6,7 +6,7 @@ use std::io::{Error, ErrorKind};
 use std::os::raw::c_int;
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Result};
+use anyhow::anyhow;
 
 use libvfio_user_sys::*;
 
@@ -152,7 +152,7 @@ impl<T: Device> DeviceContext<T> {
     }
 
     // Attach to the transport, if non-blocking it may return None and needs to be called again
-    pub fn attach(&self) -> Result<Option<()>> {
+    pub fn attach(&self) -> anyhow::Result<Option<()>> {
         unsafe {
             let ret = vfu_attach_ctx(self.vfu_ctx.unwrap());
 
@@ -170,7 +170,7 @@ impl<T: Device> DeviceContext<T> {
         }
     }
 
-    pub fn run(&self) -> Result<u32> {
+    pub fn run(&self) -> anyhow::Result<u32> {
         unsafe {
             let ret = vfu_run_ctx(self.vfu_ctx.unwrap());
 
