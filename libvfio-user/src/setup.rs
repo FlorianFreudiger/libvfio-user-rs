@@ -183,6 +183,22 @@ impl DeviceConfiguration {
             return Err(anyhow!("Failed to setup device reset callback: {}", err));
         }
 
+        // Only register if requested since I'm not sure if vfu_setup_device_dma's "internal
+        // DMA controller" causes any side effects other than enabling vfu_sgl_* functions.
+        // And it's probably not needed for some devices.
+        if self.setup_dma {
+            let ret = vfu_setup_device_dma(
+                raw_ctx,
+                Some(dma_register_callback::<T>),
+                Some(dma_unregister_callback::<T>),
+            );
+
+            if ret != 0 {
+                let err = Error::last_os_error();
+                return Err(anyhow!("Failed to setup DMA: {}", err));
+            }
+        }
+
         // TODO: Other callbacks
 
         Ok(())

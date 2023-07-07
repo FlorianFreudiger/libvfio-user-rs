@@ -93,6 +93,9 @@ pub struct DeviceConfiguration {
 
     #[builder(setter(custom))]
     device_regions: Vec<DeviceRegion>,
+
+    #[builder(default = "false")]
+    setup_dma: bool,
 }
 
 impl DeviceConfigurator {
@@ -226,6 +229,14 @@ pub trait Device: Default {
     fn region_access_migration(
         &mut self, offset: usize, data: &mut [u8], write: bool,
     ) -> Result<usize, i32> {
+        unimplemented!()
+    }
+
+    fn dma_register(&mut self, info: &mut vfu_dma_info) {
+        unimplemented!()
+    }
+
+    fn dma_unregister(&mut self, info: &mut vfu_dma_info) {
         unimplemented!()
     }
 }

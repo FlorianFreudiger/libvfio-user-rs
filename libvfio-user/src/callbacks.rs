@@ -100,3 +100,21 @@ pub(crate) unsafe extern "C" fn reset_callback<T: Device>(
 
     device_context.device.reset(reason).err().unwrap_or(0)
 }
+
+pub(crate) unsafe extern "C" fn dma_register_callback<T: Device>(
+    vfu_ctx: *mut vfu_ctx_t, info: *mut vfu_dma_info_t,
+) {
+    let device_context = device_context_from_vfu_ctx!(vfu_ctx);
+
+    let info = &mut *info;
+    device_context.device.dma_register(info);
+}
+
+pub(crate) unsafe extern "C" fn dma_unregister_callback<T: Device>(
+    vfu_ctx: *mut vfu_ctx_t, info: *mut vfu_dma_info_t,
+) {
+    let device_context = device_context_from_vfu_ctx!(vfu_ctx);
+
+    let info = &mut *info;
+    device_context.device.dma_unregister(info);
+}
