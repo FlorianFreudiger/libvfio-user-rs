@@ -80,6 +80,10 @@ pub struct DeviceConfiguration {
     // Path to the socket to be used for communication with the client (e.g. qemu)
     socket_path: PathBuf,
 
+    // Remove socket before setup if it already exists
+    #[builder(default = "false")]
+    overwrite_socket: bool,
+
     // Run non-blocking, caller must handle waiting/polling for requests itself
     #[builder(default = "false")]
     non_blocking: bool,

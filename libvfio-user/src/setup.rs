@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use std::ffi::CString;
+use std::fs;
 use std::io::Error;
 use std::os::raw::{c_int, c_void};
+use std::os::unix::fs::FileTypeExt;
 use std::ptr::null_mut;
 
 use anyhow::{anyhow, Context, Result};
@@ -51,6 +53,14 @@ impl DeviceConfigurator {
 
 impl DeviceConfiguration {
     unsafe fn setup_create_device<T: Device>(&self) -> Result<Box<T>> {
+        if self.overwrite_socket {
+            if let Ok(metadata) = fs::metadata(&self.socket_path) {
+                if metadata.file_type().is_socket() {
+                    fs::remove_file(&self.socket_path)?;
+                }
+            }
+        }
+
         let mut device = Box::new(T::new(DeviceContext {
             vfu_ctx: null_mut(),
         }));
