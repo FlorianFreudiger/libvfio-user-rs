@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::ffi::CString;
 use std::io::Error;
 use std::os::raw::{c_int, c_void};
+use std::ptr::null_mut;
 
 use anyhow::{anyhow, Context, Result};
 
@@ -49,8 +50,10 @@ impl DeviceConfigurator {
 }
 
 impl DeviceConfiguration {
-    unsafe fn setup_create_ctx<T: Device>(&self) -> Result<Box<DeviceContext<T>>> {
-        let mut ctx = Box::new(DeviceContext::default());
+    unsafe fn setup_create_device<T: Device>(&self) -> Result<Box<T>> {
+        let mut device = Box::new(T::new(DeviceContext {
+            vfu_ctx: null_mut(),
+        }));
 
         let socket_path = CString::new(
             self.socket_path
@@ -64,13 +67,15 @@ impl DeviceConfiguration {
         } as c_int;
 
         // Get raw pointer to box contents
-        let ctx_pointer = (&mut *ctx) as *mut DeviceContext<T>;
+        // TODO: Use some kind of Pin (instead?) of Box to ensure user cannot move out of box
+        // which would drop the box and make the pointer invalid, definitely causing segfaults
+        let device_pointer = (&mut *device) as *mut T;
 
         let raw_ctx = vfu_create_ctx(
             vfu_trans_t_VFU_TRANS_SOCK,
             socket_path.as_ptr(),
             flags,
-            ctx_pointer as *mut c_void,
+            device_pointer as *mut c_void,
             vfu_dev_type_t_VFU_DEV_TYPE_PCI,
         );
 
@@ -79,13 +84,12 @@ impl DeviceConfiguration {
             return Err(anyhow!("Failed to create VFIO context: {}", err));
         }
 
-        ctx.vfu_ctx = Some(raw_ctx);
-        Ok(ctx)
+        device.ctx_mut().vfu_ctx = raw_ctx;
+        Ok(device)
     }
 
-    unsafe fn setup_log<T: Device>(&self, ctx: &DeviceContext<T>) -> Result<()> {
-        let raw_ctx = ctx.raw_ctx();
-        let ret = vfu_setup_log(raw_ctx, Some(log_callback::<T>), 7);
+    unsafe fn setup_log<T: Device>(&self, ctx: &DeviceContext) -> Result<()> {
+        let ret = vfu_setup_log(ctx.vfu_ctx, Some(log_callback::<T>), 7);
 
         if ret < 0 {
             let err = Error::last_os_error();
@@ -94,14 +98,13 @@ impl DeviceConfiguration {
 
         // Test log
         //let msg = CString::new("test").unwrap();
-        //vfu_log(raw_ctx, 0, msg.as_ptr());
+        //vfu_log(ctx.vfu_ctx, 0, msg.as_ptr());
 
         Ok(())
     }
 
-    unsafe fn setup_pci<T: Device>(&self, ctx: &DeviceContext<T>) -> Result<()> {
-        let raw_ctx = ctx.raw_ctx();
-        let ret = vfu_pci_init(raw_ctx, self.pci_type.to_vfu_type(), 0, 0);
+    unsafe fn setup_pci<T: Device>(&self, ctx: &DeviceContext) -> Result<()> {
+        let ret = vfu_pci_init(ctx.vfu_ctx, self.pci_type.to_vfu_type(), 0, 0);
 
         if ret < 0 {
             let err = Error::last_os_error();
@@ -109,7 +112,7 @@ impl DeviceConfiguration {
         }
 
         vfu_pci_set_id(
-            raw_ctx,
+            ctx.vfu_ctx,
             self.pci_config.vendor_id,
             self.pci_config.device_id,
             self.pci_config.subsystem_vendor_id,
@@ -117,21 +120,20 @@ impl DeviceConfiguration {
         );
 
         vfu_pci_set_class(
-            raw_ctx,
+            ctx.vfu_ctx,
             self.pci_config.class_code_base,
             self.pci_config.class_code_subclass,
             self.pci_config.class_code_programming_interface,
         );
 
         // Set other pci fields directly since libvfio-user does not provide functions for them
-        let config_space = vfu_pci_get_config_space(raw_ctx).as_mut().unwrap();
+        let config_space = vfu_pci_get_config_space(ctx.vfu_ctx).as_mut().unwrap();
         config_space.__bindgen_anon_1.hdr.__bindgen_anon_1.rid = self.pci_config.revision_id;
 
         Ok(())
     }
 
-    unsafe fn setup_device_regions<T: Device>(&self, ctx: &DeviceContext<T>) -> Result<()> {
-        let raw_ctx = ctx.raw_ctx();
+    unsafe fn setup_device_regions<T: Device>(&self, ctx: &DeviceContext) -> Result<()> {
         for region in &self.device_regions {
             let region_idx = region.region_type.to_vfu_region_type();
 
@@ -154,12 +156,12 @@ impl DeviceConfiguration {
             let callback = region.region_type.get_region_access_callback_fn::<T>();
 
             let ret = vfu_setup_region(
-                raw_ctx,
+                ctx.vfu_ctx,
                 region_idx,
                 region.size,
                 Some(callback),
                 flags as c_int,
-                std::ptr::null_mut(), // TODO: Allow mappings
+                null_mut(), // TODO: Allow mappings
                 0,
                 region.file_descriptor,
                 region.offset,
@@ -174,10 +176,8 @@ impl DeviceConfiguration {
         Ok(())
     }
 
-    unsafe fn setup_other_callbacks<T: Device>(&self, ctx: &DeviceContext<T>) -> Result<()> {
-        let raw_ctx = ctx.raw_ctx();
-
-        let ret = vfu_setup_device_reset_cb(raw_ctx, Some(reset_callback::<T>));
+    unsafe fn setup_other_callbacks<T: Device>(&self, ctx: &DeviceContext) -> Result<()> {
+        let ret = vfu_setup_device_reset_cb(ctx.vfu_ctx, Some(reset_callback::<T>));
         if ret != 0 {
             let err = Error::last_os_error();
             return Err(anyhow!("Failed to setup device reset callback: {}", err));
@@ -188,7 +188,7 @@ impl DeviceConfiguration {
         // And it's probably not needed for some devices.
         if self.setup_dma {
             let ret = vfu_setup_device_dma(
-                raw_ctx,
+                ctx.vfu_ctx,
                 Some(dma_register_callback::<T>),
                 Some(dma_unregister_callback::<T>),
             );
@@ -204,9 +204,8 @@ impl DeviceConfiguration {
         Ok(())
     }
 
-    unsafe fn setup_realize<T: Device>(&self, ctx: &DeviceContext<T>) -> Result<()> {
-        let raw_ctx = ctx.raw_ctx();
-        let ret = vfu_realize_ctx(raw_ctx);
+    unsafe fn setup_realize<T: Device>(&self, ctx: &DeviceContext) -> Result<()> {
+        let ret = vfu_realize_ctx(ctx.vfu_ctx);
 
         if ret != 0 {
             let err = Error::last_os_error();
@@ -216,16 +215,18 @@ impl DeviceConfiguration {
         Ok(())
     }
 
-    pub(crate) unsafe fn setup_all<T: Device>(&self) -> Result<Box<DeviceContext<T>>> {
-        let ctx = self.setup_create_ctx()?;
-        self.setup_log(&ctx)?;
-        self.setup_pci(&ctx)?;
-        self.setup_device_regions(&ctx)?;
+    pub(crate) unsafe fn setup_all<T: Device>(&self) -> Result<Box<T>> {
+        let device: Box<T> = self.setup_create_device()?;
+        let ctx = device.ctx();
+
+        self.setup_log::<T>(ctx)?;
+        self.setup_pci::<T>(ctx)?;
+        self.setup_device_regions::<T>(ctx)?;
         // TODO: Interrupts
         // TODO: Capabilities
-        self.setup_other_callbacks(&ctx)?;
-        self.setup_realize(&ctx)?;
+        self.setup_other_callbacks::<T>(ctx)?;
+        self.setup_realize::<T>(ctx)?;
 
-        Ok(ctx)
+        Ok(device)
     }
 }

@@ -106,26 +106,20 @@ impl DeviceConfigurator {
 }
 
 impl DeviceConfiguration {
-    pub fn produce<T: Device>(&self) -> anyhow::Result<Box<DeviceContext<T>>> {
+    pub fn produce<T: Device>(&self) -> anyhow::Result<Box<T>> {
         unsafe { self.setup_all() }
     }
 }
 
-#[derive(Default)]
-pub struct DeviceContext<T: Device> {
-    vfu_ctx: Option<*mut vfu_ctx_t>,
-    device: T,
+pub struct DeviceContext {
+    vfu_ctx: *mut vfu_ctx_t,
 }
 
-impl<T: Device> DeviceContext<T> {
-    pub fn raw_ctx(&self) -> *mut vfu_ctx_t {
-        self.vfu_ctx.unwrap()
-    }
-
+impl DeviceContext {
     // Attach to the transport, if non-blocking it may return None and needs to be called again
     pub fn attach(&self) -> anyhow::Result<Option<()>> {
         unsafe {
-            let ret = vfu_attach_ctx(self.vfu_ctx.unwrap());
+            let ret = vfu_attach_ctx(self.vfu_ctx);
 
             if ret != 0 {
                 let err = Error::last_os_error();
@@ -143,7 +137,7 @@ impl<T: Device> DeviceContext<T> {
 
     pub fn run(&self) -> anyhow::Result<u32> {
         unsafe {
-            let ret = vfu_run_ctx(self.vfu_ctx.unwrap());
+            let ret = vfu_run_ctx(self.vfu_ctx);
 
             if ret < 0 {
                 let err = Error::last_os_error();
@@ -155,19 +149,20 @@ impl<T: Device> DeviceContext<T> {
     }
 }
 
-impl<T: Device> Drop for DeviceContext<T> {
+impl Drop for DeviceContext {
     fn drop(&mut self) {
         unsafe {
-            match self.vfu_ctx {
-                Some(ctx) => vfu_destroy_ctx(ctx),
-                None => (),
-            }
+            vfu_destroy_ctx(self.vfu_ctx);
         }
     }
 }
 
 #[allow(unused_variables)]
-pub trait Device: Default {
+pub trait Device {
+    fn new(ctx: DeviceContext) -> Self;
+    fn ctx(&self) -> &DeviceContext;
+    fn ctx_mut(&mut self) -> &mut DeviceContext;
+
     fn log(&self, level: i32, msg: &str);
 
     fn reset(&mut self, reason: DeviceResetReason) -> Result<(), i32>;

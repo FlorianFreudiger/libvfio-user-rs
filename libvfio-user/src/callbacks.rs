@@ -6,23 +6,23 @@ use errno::{set_errno, Errno};
 
 use libvfio_user_sys::*;
 
-use crate::{Device, DeviceContext, DeviceRegionKind, DeviceResetReason};
+use crate::{Device, DeviceRegionKind, DeviceResetReason};
 
 // Use macro to avoid having to specify a lifetime
-macro_rules! device_context_from_vfu_ctx {
+macro_rules! device_from_vfu_ctx {
     ($vfu_ctx:ident) => {{
         let private = vfu_get_private($vfu_ctx);
-        &mut *(private as *mut DeviceContext<T>)
+        &mut *(private as *mut T)
     }};
 }
 
 pub(crate) unsafe extern "C" fn log_callback<T: Device>(
     vfu_ctx: *mut vfu_ctx_t, level: c_int, msg: *const c_char,
 ) {
-    let device_context = device_context_from_vfu_ctx!(vfu_ctx);
+    let device = device_from_vfu_ctx!(vfu_ctx);
     let msg = unsafe { CStr::from_ptr(msg) };
 
-    device_context.device.log(level, msg.to_str().unwrap());
+    device.log(level, msg.to_str().unwrap());
 }
 
 impl DeviceRegionKind {
@@ -52,8 +52,7 @@ impl DeviceRegionKind {
 pub(crate) unsafe extern "C" fn region_access_callback<T: Device, const R: u8>(
     vfu_ctx: *mut vfu_ctx_t, buf: *mut c_char, count: usize, offset: loff_t, is_write: bool,
 ) -> isize {
-    let device_context = device_context_from_vfu_ctx!(vfu_ctx);
-    let device = &mut device_context.device;
+    let device = device_from_vfu_ctx!(vfu_ctx);
 
     let buf = from_raw_parts_mut(buf as *mut u8, count);
     let offset = offset as usize;
@@ -87,7 +86,7 @@ pub(crate) unsafe extern "C" fn region_access_callback<T: Device, const R: u8>(
 pub(crate) unsafe extern "C" fn reset_callback<T: Device>(
     vfu_ctx: *mut vfu_ctx_t, reset_type: vfu_reset_type_t,
 ) -> c_int {
-    let device_context = device_context_from_vfu_ctx!(vfu_ctx);
+    let device = device_from_vfu_ctx!(vfu_ctx);
 
     let reason = match reset_type {
         x if x == vfu_reset_type_VFU_RESET_DEVICE => DeviceResetReason::ClientRequest,
@@ -98,23 +97,23 @@ pub(crate) unsafe extern "C" fn reset_callback<T: Device>(
         }
     };
 
-    device_context.device.reset(reason).err().unwrap_or(0)
+    device.reset(reason).err().unwrap_or(0)
 }
 
 pub(crate) unsafe extern "C" fn dma_register_callback<T: Device>(
     vfu_ctx: *mut vfu_ctx_t, info: *mut vfu_dma_info_t,
 ) {
-    let device_context = device_context_from_vfu_ctx!(vfu_ctx);
+    let device = device_from_vfu_ctx!(vfu_ctx);
 
     let info = &mut *info;
-    device_context.device.dma_register(info);
+    device.dma_register(info);
 }
 
 pub(crate) unsafe extern "C" fn dma_unregister_callback<T: Device>(
     vfu_ctx: *mut vfu_ctx_t, info: *mut vfu_dma_info_t,
 ) {
-    let device_context = device_context_from_vfu_ctx!(vfu_ctx);
+    let device = device_from_vfu_ctx!(vfu_ctx);
 
     let info = &mut *info;
-    device_context.device.dma_unregister(info);
+    device.dma_unregister(info);
 }
