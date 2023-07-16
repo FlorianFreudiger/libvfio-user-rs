@@ -11,6 +11,7 @@ bindgen = "0.66.1"
 meson-next = "1.2.2"
 pkg-config = "0.3.27"
 diffy = "0.3.0"
+anyhow = "1.0.72"
 
 [dependencies]
 

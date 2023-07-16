@@ -2,23 +2,25 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
+use anyhow::Result;
 use diffy::{apply, Patch};
 use meson_next::config::Config;
 
-fn patch(patch_path: &Path, target_path: &Path, keyword: &str) {
-    let contents = fs::read_to_string(target_path).unwrap();
+fn patch(patch_path: &Path, target_path: &Path, keyword: &str) -> Result<()> {
+    let contents = fs::read_to_string(target_path)?;
 
     if contents.contains(keyword) {
         // Already patched
-        return;
+        return Ok(());
     }
 
-    let patch_contents = fs::read_to_string(patch_path).unwrap();
+    let patch_contents = fs::read_to_string(patch_path)?;
 
-    let patch = Patch::from_str(&*patch_contents).unwrap();
-    let contents = apply(&*contents, &patch).unwrap();
+    let patch = Patch::from_str(&*patch_contents)?;
+    let contents = apply(&*contents, &patch)?;
 
-    fs::write(target_path, contents).unwrap();
+    fs::write(target_path, contents)?;
+    Ok(())
 }
 
 fn main() {
@@ -91,9 +93,12 @@ fn main() {
         println!("cargo:warning=Could not find cmocka, build may fail");
     }
 
-    // 3.1 Patch libvfio-user if requested
+    // 3.1 Patch libvfio-user if requested, reverse patch if not
     if patch_dma_limit {
-        patch(&*patch_path, &*patch_target, "MAX_DMA_REGIONS 8192");
+        patch(&*patch_path, &*patch_target, "MAX_DMA_REGIONS 8192").unwrap();
+    } else {
+        // Ignore errors, since patch should not have any negative side effects
+        let _ = patch(&*patch_undo_path, &*patch_target, "MAX_DMA_REGIONS 16");
     }
 
     // 3.2 Meson build
@@ -112,8 +117,8 @@ fn main() {
         meson_next::build(libvfio_user_path_str, build_path_str, meson_config);
     }
 
-    // 3.3 Reverse patch
-    patch(&*patch_undo_path, &*patch_target, "MAX_DMA_REGIONS 16");
+    // 3.3 Reverse patch, ignore errors
+    let _ = patch(&*patch_undo_path, &*patch_target, "MAX_DMA_REGIONS 16");
 
     // 4. Generate bindings
     // The bindgen::Builder is the main entry point
