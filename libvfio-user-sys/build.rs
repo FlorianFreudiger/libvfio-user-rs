@@ -1,12 +1,31 @@
 use std::collections::HashMap;
-use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::{env, fs};
 
+use diffy::{apply, Patch};
 use meson_next::config::Config;
+
+// TODO: Ability to revert patches, for now fine since the only patch should be harmless
+fn patch(patch_path: &Path, target_path: &Path, keyword: &str) {
+    let contents = fs::read_to_string(target_path).unwrap();
+
+    if contents.contains(keyword) {
+        // Already patched
+        return;
+    }
+
+    let patch_contents = fs::read_to_string(patch_path).unwrap();
+
+    let patch = Patch::from_str(&*patch_contents).unwrap();
+    let contents = apply(&*contents, &patch).unwrap();
+
+    fs::write(target_path, contents).unwrap();
+}
 
 fn main() {
     let build_static = cfg!(feature = "build-static");
     let build_shared = cfg!(feature = "build-shared");
+    let patch_dma_limit = cfg!(feature = "patch-dma-limit");
 
     // 1. Prepare paths
     let libvfio_user_path = PathBuf::from("libvfio-user");
@@ -14,6 +33,9 @@ fn main() {
 
     let header_path = libvfio_user_path.join("include/libvfio-user.h");
     let header_path_str = header_path.to_str().unwrap();
+
+    let patch_path = PathBuf::from("patches/increase-dma-region-limit.patch");
+    let patch_target = libvfio_user_path.join("lib/private.h");
 
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
 
@@ -49,6 +71,7 @@ fn main() {
 
     // 3. Build libvfio-user
 
+    // 3.0 Dependencies
     // Try to include dependencies of libvfio-user
     // pkg_config will automatically configure cargo to link the dependencies
     if pkg_config::Config::new()
@@ -68,6 +91,12 @@ fn main() {
         println!("cargo:warning=Could not find cmocka, build may fail");
     }
 
+    // 3.1 Patch libvfio-user if requested
+    if patch_dma_limit {
+        patch(&*patch_path, &*patch_target, "DMA_MAX_REGIONS_PATCH_APPLIED");
+    }
+
+    // 3.2 Meson build
     if build_static || build_shared {
         let mut meson_options = HashMap::new();
 

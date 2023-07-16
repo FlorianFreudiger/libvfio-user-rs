@@ -1,0 +1,14 @@
+diff --git a/lib/private.h b/lib/private.h
+index fdd804f..c47a7c7 100644
+--- a/lib/private.h
++++ b/lib/private.h
+@@ -50,7 +50,8 @@
+ #else
+ #define MAX_DMA_SIZE UINT32_MAX /* FIXME check for __i386__ etc? */
+ #endif
+-#define MAX_DMA_REGIONS 16
++// Patched by libvfio-user-rs
++#define MAX_DMA_REGIONS 8192 // DMA_MAX_REGIONS_PATCH_APPLIED
+ 
+ #define SERVER_MAX_DATA_XFER_SIZE (VFIO_USER_DEFAULT_MAX_DATA_XFER_SIZE)
+ 
