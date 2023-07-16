@@ -8,7 +8,7 @@ index fdd804f..c47a7c7 100644
  #endif
 -#define MAX_DMA_REGIONS 16
 +// Patched by libvfio-user-rs
-+#define MAX_DMA_REGIONS 8192 // DMA_MAX_REGIONS_PATCH_APPLIED
++#define MAX_DMA_REGIONS 8192
  
  #define SERVER_MAX_DATA_XFER_SIZE (VFIO_USER_DEFAULT_MAX_DATA_XFER_SIZE)
  

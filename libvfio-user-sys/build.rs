@@ -5,7 +5,6 @@ use std::{env, fs};
 use diffy::{apply, Patch};
 use meson_next::config::Config;
 
-// TODO: Ability to revert patches, for now fine since the only patch should be harmless
 fn patch(patch_path: &Path, target_path: &Path, keyword: &str) {
     let contents = fs::read_to_string(target_path).unwrap();
 
@@ -35,6 +34,7 @@ fn main() {
     let header_path_str = header_path.to_str().unwrap();
 
     let patch_path = PathBuf::from("patches/increase-dma-region-limit.patch");
+    let patch_undo_path = PathBuf::from("patches/increase-dma-region-limit_undo.patch");
     let patch_target = libvfio_user_path.join("lib/private.h");
 
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -93,7 +93,7 @@ fn main() {
 
     // 3.1 Patch libvfio-user if requested
     if patch_dma_limit {
-        patch(&*patch_path, &*patch_target, "DMA_MAX_REGIONS_PATCH_APPLIED");
+        patch(&*patch_path, &*patch_target, "MAX_DMA_REGIONS 8192");
     }
 
     // 3.2 Meson build
@@ -111,6 +111,9 @@ fn main() {
         let meson_config = Config::new().options(meson_options);
         meson_next::build(libvfio_user_path_str, build_path_str, meson_config);
     }
+
+    // 3.3 Reverse patch
+    patch(&*patch_undo_path, &*patch_target, "MAX_DMA_REGIONS 16");
 
     // 4. Generate bindings
     // The bindgen::Builder is the main entry point

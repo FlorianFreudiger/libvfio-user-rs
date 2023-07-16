@@ -1,0 +1,12 @@
+--- b/lib/private.h
++++ a/lib/private.h
+@@ -50,8 +50,7 @@
+ #else
+ #define MAX_DMA_SIZE UINT32_MAX /* FIXME check for __i386__ etc? */
+ #endif
++#define MAX_DMA_REGIONS 16
+-// Patched by libvfio-user-rs
+-#define MAX_DMA_REGIONS 8192
+ 
+ #define SERVER_MAX_DATA_XFER_SIZE (VFIO_USER_DEFAULT_MAX_DATA_XFER_SIZE)
+ 
