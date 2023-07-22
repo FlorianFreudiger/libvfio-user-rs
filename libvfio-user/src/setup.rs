@@ -63,6 +63,7 @@ impl DeviceConfiguration {
 
         let mut device = Box::new(T::new(DeviceContext {
             vfu_ctx: null_mut(),
+            dma_regions: Default::default(),
         }));
 
         let socket_path = CString::new(

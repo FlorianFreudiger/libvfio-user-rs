@@ -106,7 +106,10 @@ pub(crate) unsafe extern "C" fn dma_register_callback<T: Device>(
     let device = device_from_vfu_ctx!(vfu_ctx);
 
     let info = &mut *info;
-    device.dma_register(info);
+    device
+        .ctx_mut()
+        .dma_regions
+        .insert(info.iova.iov_base as usize, info.iova.iov_len);
 }
 
 pub(crate) unsafe extern "C" fn dma_unregister_callback<T: Device>(
@@ -115,5 +118,8 @@ pub(crate) unsafe extern "C" fn dma_unregister_callback<T: Device>(
     let device = device_from_vfu_ctx!(vfu_ctx);
 
     let info = &mut *info;
-    device.dma_unregister(info);
+    device
+        .ctx_mut()
+        .dma_regions
+        .remove(&(info.iova.iov_base as usize));
 }

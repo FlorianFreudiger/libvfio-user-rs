@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate derive_builder;
 
+use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::path::PathBuf;
 
@@ -9,6 +10,7 @@ use anyhow::anyhow;
 use libvfio_user_sys::*;
 
 mod callbacks;
+pub mod dma;
 mod setup;
 
 #[derive(Clone, Debug)]
@@ -117,6 +119,8 @@ impl DeviceConfiguration {
 
 pub struct DeviceContext {
     vfu_ctx: *mut vfu_ctx_t,
+    // Base address to length map of registered dma regions
+    dma_regions: HashMap<usize, usize>,
 }
 
 impl DeviceContext {
@@ -228,14 +232,6 @@ pub trait Device {
     fn region_access_migration(
         &mut self, offset: usize, data: &mut [u8], write: bool,
     ) -> Result<usize, i32> {
-        unimplemented!()
-    }
-
-    fn dma_register(&mut self, info: &mut vfu_dma_info) {
-        unimplemented!()
-    }
-
-    fn dma_unregister(&mut self, info: &mut vfu_dma_info) {
         unimplemented!()
     }
 }
