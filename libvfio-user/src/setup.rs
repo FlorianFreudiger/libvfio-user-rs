@@ -194,9 +194,9 @@ impl DeviceConfiguration {
             return Err(anyhow!("Failed to setup device reset callback: {}", err));
         }
 
-        // Only register if requested since I'm not sure if vfu_setup_device_dma's "internal
-        // DMA controller" causes any side effects other than enabling vfu_sgl_* functions.
-        // And it's probably not needed for some devices.
+        // Only setup dma if requested since this requires additional operations by both
+        // libvfio-user and this wrapper for tracking and mapping dma regions,
+        // which the device may not use at all
         if self.setup_dma {
             let ret = vfu_setup_device_dma(
                 ctx.vfu_ctx,

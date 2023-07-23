@@ -1,78 +1,42 @@
+use std::fmt::{Debug, Formatter};
 use std::io::Error;
-use std::os::raw::c_int;
+use std::mem::size_of;
 use std::ptr::null_mut;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{anyhow, ensure, Result};
 
 use libvfio_user_sys::*;
 
 use crate::DeviceContext;
 
-#[derive(Debug)]
-pub struct DmaProtection {
-    pub read: bool,
-    pub write: bool,
-    pub execute: bool,
-}
-
-impl DmaProtection {
-    fn int(&self) -> c_int {
-        let mut prot = 0;
-
-        if self.read {
-            prot |= 0x1;
-        }
-        if self.write {
-            prot |= 0x2;
-        }
-        if self.execute {
-            prot |= 0x4;
-        }
-
-        prot
-    }
-}
-
-#[derive(Debug)]
+/// Mapping to a certain guest range, may span multiple mapped regions
+// Debug implemented manually to inspect sgl entries
 pub struct DmaMapping {
+    // Vfu context and sgls are needed for vfu_sgl_put call when mapping is dropped
     ctx: *mut vfu_ctx_t,
     sgl_buffer: Vec<u8>,
-    iovs: Vec<*mut iovec>,
-    count: usize,
+    mapped_regions: Vec<iovec>,
 }
 
 impl DmaMapping {
-    pub fn iov(&self, index: usize) -> &[u8] {
-        unsafe {
-            let iov = *self.iovs[index];
-            from_raw_parts(iov.iov_base as *const u8, iov.iov_len)
-        }
+    pub fn dma(&self, region_index: usize) -> &[u8] {
+        let region = self.mapped_regions[region_index];
+        unsafe { from_raw_parts(region.iov_base as *const u8, region.iov_len) }
     }
 
-    pub fn iov_mut(&mut self, index: usize) -> &mut [u8] {
-        unsafe {
-            let iov = *self.iovs[index];
-            from_raw_parts_mut(iov.iov_base as *mut u8, iov.iov_len)
-        }
+    pub fn dma_mut(&mut self, region_index: usize) -> &mut [u8] {
+        let region = self.mapped_regions[region_index];
+        unsafe { from_raw_parts_mut(region.iov_base as *mut u8, region.iov_len) }
+        // We do not need to call vfu_sgl_mark_dirty since we call vfu_sgl_put on drop
     }
 
-    pub fn iov_len(&self, index: usize) -> usize {
-        unsafe {
-            let iov = *self.iovs[index];
-            iov.iov_len
-        }
+    pub fn region_length(&self, region_index: usize) -> usize {
+        self.mapped_regions[region_index].iov_len
     }
 
     pub fn total_length(&self) -> usize {
-        let mut total = 0;
-        unsafe {
-            for iov_p in self.iovs.iter() {
-                let iov = **iov_p;
-                total += iov.iov_len;
-            }
-        }
-        total
+        self.mapped_regions.iter().map(|x| x.iov_len).sum()
     }
 }
 
@@ -82,40 +46,47 @@ impl Drop for DmaMapping {
             vfu_sgl_put(
                 self.ctx,
                 self.sgl_buffer.as_mut_ptr() as *mut dma_sg_t,
-                self.iovs.as_mut_ptr() as *mut iovec,
-                self.count,
+                self.mapped_regions.as_mut_ptr(), // Parameter unused inside vfu_sgl_put
+                self.mapped_regions.len(),
             );
         }
     }
 }
 
 impl DeviceContext {
-    pub fn create_dma_mapping(
-        &mut self, dma_addr: usize, protection: &DmaProtection, max_sgl_entries: usize,
+    pub fn map_range(
+        &mut self, dma_addr: usize, len: usize, max_regions: usize, read: bool, write: bool,
     ) -> Result<DmaMapping> {
-        ensure!(max_sgl_entries > 0, "At least 1 entry is required.");
+        ensure!(max_regions > 0, "At least 1 region is required.");
+        ensure!(
+            !self.dma_regions.is_empty(),
+            "No mappable regions registered, have you called .setup_dma(true) during configuration?"
+        );
 
-        let len = self
-            .dma_regions
-            .get(&dma_addr)
-            .context("Dma range not registered")?;
-
-        let prot = protection.int();
+        let mut prot = 0;
+        if read {
+            prot |= 0x1;
+        }
+        if write {
+            prot |= 0x2;
+        }
 
         unsafe {
-            // dma_sg_t size is only indirectly available, allocate a buffer and do casts instead
-            let mut sgl_buffer = vec![0u8; dma_sg_size() * max_sgl_entries];
+            // 1. Gather SGL
 
-            let count = vfu_addr_to_sgl(
+            // dma_sg_t size is only indirectly available, allocate a buffer and do casts instead
+            let mut sgl_buffer = vec![0u8; dma_sg_size() * max_regions];
+
+            let ret = vfu_addr_to_sgl(
                 self.vfu_ctx,
                 dma_addr as vfu_dma_addr_t,
-                *len,
+                len,
                 sgl_buffer.as_mut_ptr() as *mut dma_sg_t,
-                max_sgl_entries,
+                max_regions,
                 prot,
             );
 
-            match count {
+            match ret {
                 0 => {
                     return Err(anyhow!(
                         "Failed to populate sgl entries: no entries created"
@@ -129,13 +100,13 @@ impl DeviceContext {
                     return Err(anyhow!(
                         "Failed to populate sgl entries, not enough sg entries available, \
                         required={}, available={}",
-                        -count - 1,
-                        max_sgl_entries
+                        -ret - 1,
+                        max_regions
                     ));
                 }
                 _ => {}
             }
-            let count = count as usize;
+            let region_count = ret as usize;
 
             // Ensure all sgl entries are mappable
             for (i, sg) in sgl_buffer.chunks_exact_mut(dma_sg_size()).enumerate() {
@@ -146,29 +117,93 @@ impl DeviceContext {
                 );
             }
 
-            let mut iovs: Vec<*mut iovec> = vec![null_mut(); count];
+            // 2. Collect iovec to each region
+
+            let mut iovs: Vec<iovec> = vec![
+                iovec {
+                    iov_base: null_mut(),
+                    iov_len: 0
+                };
+                region_count
+            ];
             let ret = vfu_sgl_get(
                 self.vfu_ctx,
                 sgl_buffer.as_mut_ptr() as *mut dma_sg_t,
-                iovs.as_mut_ptr() as *mut iovec,
-                count,
+                iovs.as_mut_ptr(),
+                region_count,
                 0,
             );
             if ret != 0 {
                 let err = Error::last_os_error();
                 return Err(anyhow!("Failed to populate iovec array: {}", err));
             }
-            ensure!(
-                !iovs.contains(&null_mut()),
-                "vfu_sgl_get did not fill iovs properly"
-            );
 
             Ok(DmaMapping {
                 ctx: self.vfu_ctx,
                 sgl_buffer,
-                iovs,
-                count,
+                mapped_regions: iovs,
             })
+        }
+    }
+}
+
+// Replica struct of dma_sg in libvfio-user/lib/dma.h
+// dma_sg is not directly exposed, only its size via dma_sg_size()
+// I assume this is because it may change in the future.
+// Therefore this replica should only be used for debugging purposes.
+#[repr(C)]
+#[derive(Debug)]
+struct DmaSgDebug {
+    dma_addr: vfu_dma_addr_t,
+    region: i32,
+    length: u64,
+    offset: u64,
+    writeable: bool,
+}
+
+impl DmaSgDebug {
+    unsafe fn try_from_ptr(sg: *const dma_sg_t) -> Option<DmaSgDebug> {
+        if sg.is_null() {
+            return None;
+        }
+
+        // If sizes don't match the struct probably changed
+        if dma_sg_size() != size_of::<DmaSgDebug>() {
+            return None;
+        }
+
+        let sg_debug = (sg as *const DmaSgDebug).read();
+        Some(sg_debug)
+    }
+}
+
+impl Debug for DmaMapping {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        unsafe {
+            // Try to use list of DmaSgDebug instead of just printing the sgl_buffer byte vec
+            let mut sgl = vec![];
+            let mut sgl_formatted = true;
+
+            for sg_chunk in self.sgl_buffer.chunks_exact(dma_sg_size()) {
+                match DmaSgDebug::try_from_ptr(sg_chunk.as_ptr() as *const dma_sg_t) {
+                    Some(sg_debug) => {
+                        sgl.push(sg_debug);
+                    }
+                    None => {
+                        sgl_formatted = false;
+                        break;
+                    }
+                }
+            }
+
+            let mut format = f.debug_struct("DmaMapping");
+            if sgl_formatted {
+                format.field("sgl", &sgl)
+            } else {
+                format.field("sgl_buffer", &self.sgl_buffer)
+            }
+            .field("mapped_regions", &self.mapped_regions)
+            .finish()
         }
     }
 }
