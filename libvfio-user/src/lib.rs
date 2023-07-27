@@ -3,6 +3,7 @@ extern crate derive_builder;
 
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
+use std::os::fd::{AsRawFd, RawFd};
 use std::path::PathBuf;
 
 use anyhow::anyhow;
@@ -131,7 +132,7 @@ impl DeviceContext {
         &self.dma_regions
     }
 
-    // Attach to the transport, if non-blocking it may return None and needs to be called again
+    /// Attach to the transport, if non-blocking it may return None and needs to be called again
     pub fn attach(&self) -> anyhow::Result<Option<()>> {
         unsafe {
             let ret = vfu_attach_ctx(self.vfu_ctx);
@@ -150,16 +151,24 @@ impl DeviceContext {
         }
     }
 
-    pub fn run(&self) -> anyhow::Result<u32> {
+    pub fn run(&self) -> anyhow::Result<()> {
         unsafe {
-            let ret = vfu_run_ctx(self.vfu_ctx);
+            // Loop until all requests have been processed, useful for non-blocking contexts.
+            // If blocking, can only return via error or client disconnect, regardless of the loop
+            loop {
+                let processed_requests = vfu_run_ctx(self.vfu_ctx);
 
-            if ret < 0 {
-                let err = Error::last_os_error();
-                return Err(anyhow!("Failed to run device: {}", err));
+                if processed_requests < 0 {
+                    let err = Error::last_os_error();
+                    return Err(anyhow!("Failed to run device: {}", err));
+                }
+
+                if processed_requests == 0 {
+                    break;
+                }
             }
 
-            Ok(ret as u32)
+            Ok(())
         }
     }
 }
@@ -169,6 +178,12 @@ impl Drop for DeviceContext {
         unsafe {
             vfu_destroy_ctx(self.vfu_ctx);
         }
+    }
+}
+
+impl AsRawFd for DeviceContext {
+    fn as_raw_fd(&self) -> RawFd {
+        unsafe { vfu_get_poll_fd(self.vfu_ctx) }
     }
 }
 

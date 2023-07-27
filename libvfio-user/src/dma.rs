@@ -57,6 +57,10 @@ impl DeviceContext {
     pub fn map_range(
         &mut self, dma_addr: usize, len: usize, max_regions: usize, read: bool, write: bool,
     ) -> Result<DmaMapping> {
+        ensure!(
+            len > 0,
+            "Mapping should not be empty. Skip calling if len == 0."
+        );
         ensure!(max_regions > 0, "At least 1 region is required.");
         ensure!(
             !self.dma_regions.is_empty(),
