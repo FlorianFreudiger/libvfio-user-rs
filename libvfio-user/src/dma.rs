@@ -38,6 +38,17 @@ impl DmaMapping {
     pub fn total_length(&self) -> usize {
         self.mapped_regions.iter().map(|x| x.iov_len).sum()
     }
+
+    pub fn base_addresses(&self) -> Vec<usize> {
+        self.mapped_regions
+            .iter()
+            .map(|iov| iov.iov_base as usize)
+            .collect()
+    }
+
+    pub fn lengths(&self) -> Vec<usize> {
+        self.mapped_regions.iter().map(|iov| iov.iov_len).collect()
+    }
 }
 
 impl Drop for DmaMapping {

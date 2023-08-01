@@ -256,4 +256,8 @@ pub trait Device {
     ) -> Result<usize, i32> {
         unimplemented!()
     }
+
+    // Optional dma callbacks, regions are also automatically tracked in DeviceContext's dma_regions
+    fn dma_range_added(&mut self, base_address: usize, length: usize) {}
+    fn dma_range_removed(&mut self, base_address: usize) {}
 }
