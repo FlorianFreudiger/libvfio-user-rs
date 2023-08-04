@@ -11,7 +11,10 @@ use anyhow::{anyhow, Context, Result};
 use libvfio_user_sys::*;
 
 use crate::callbacks::*;
-use crate::{Device, DeviceConfiguration, DeviceConfigurator, DeviceContext, DeviceRegionKind};
+use crate::{
+    Device, DeviceConfiguration, DeviceConfigurator, DeviceContext, DeviceRegionKind,
+    InterruptRequestKind,
+};
 
 impl DeviceRegionKind {
     pub(crate) fn to_vfu_region_type(&self) -> c_int {
@@ -187,6 +190,53 @@ impl DeviceConfiguration {
         Ok(())
     }
 
+    unsafe fn setup_interrupt_requests<T: Device>(&self, ctx: &DeviceContext) -> Result<()> {
+        const CAPABILITY_ID_MSIX: u8 = 0x11;
+        const CAPABILITY_ID_MSI: u8 = 0x5;
+
+        for (irq_kind, count) in &self.interrupt_request_counts {
+            let ret = vfu_setup_device_nr_irqs(ctx.vfu_ctx, irq_kind.to_vfu_type(), *count);
+
+            if ret != 0 {
+                let err = Error::last_os_error();
+                return Err(anyhow!(
+                    "Failed to set interrupt request count for kind {:?}: {}",
+                    irq_kind,
+                    err
+                ));
+            }
+
+            // If used, add msi capability
+            if let InterruptRequestKind::Msi = irq_kind {
+                // Since libvfio-user doesn't currently support the msi capability,
+                // use workaround to add it: add msix capability and change id to msi
+                // TODO: Be careful when adding further caps since msi cap is longer than msix
+
+                let mut cap = vec![0u8; 12];
+                cap[0] = CAPABILITY_ID_MSIX;
+                let ret =
+                    vfu_pci_add_capability(ctx.vfu_ctx, 0, 0, cap.as_mut_ptr() as *mut c_void);
+
+                if ret < 0 {
+                    let err = Error::last_os_error();
+                    return Err(anyhow!(
+                        "Failed to set interrupt request count for kind {:?}: {}",
+                        irq_kind,
+                        err
+                    ));
+                }
+                let offset = ret as usize;
+                let config_space = vfu_pci_get_config_space(ctx.vfu_ctx).as_mut().unwrap();
+
+                config_space.__bindgen_anon_1.raw[offset] = CAPABILITY_ID_MSI;
+            }
+
+            // TODO: Add MSI-X capability
+        }
+
+        Ok(())
+    }
+
     unsafe fn setup_other_callbacks<T: Device>(&self, ctx: &DeviceContext) -> Result<()> {
         let ret = vfu_setup_device_reset_cb(ctx.vfu_ctx, Some(reset_callback::<T>));
         if ret != 0 {
@@ -233,7 +283,7 @@ impl DeviceConfiguration {
         self.setup_log::<T>(ctx)?;
         self.setup_pci::<T>(ctx)?;
         self.setup_device_regions::<T>(ctx)?;
-        // TODO: Interrupts
+        self.setup_interrupt_requests::<T>(ctx)?;
         // TODO: Capabilities
         self.setup_other_callbacks::<T>(ctx)?;
         self.setup_realize::<T>(ctx)?;

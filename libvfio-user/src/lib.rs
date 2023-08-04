@@ -70,6 +70,30 @@ pub enum DeviceRegionKind {
     Migration,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum InterruptRequestKind {
+    /// Legacy interrupt
+    IntX,
+    /// Message signaled interrupt
+    Msi,
+    MsiX,
+    // Other
+    Err,
+    Req,
+}
+
+impl InterruptRequestKind {
+    fn to_vfu_type(&self) -> vfu_dev_irq_type {
+        match self {
+            InterruptRequestKind::IntX => vfu_dev_irq_type_VFU_DEV_INTX_IRQ,
+            InterruptRequestKind::Msi => vfu_dev_irq_type_VFU_DEV_MSI_IRQ,
+            InterruptRequestKind::MsiX => vfu_dev_irq_type_VFU_DEV_MSIX_IRQ,
+            InterruptRequestKind::Err => vfu_dev_irq_type_VFU_DEV_ERR_IRQ,
+            InterruptRequestKind::Req => vfu_dev_irq_type_VFU_DEV_REQ_IRQ,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum DeviceResetReason {
     ClientRequest,
@@ -101,6 +125,9 @@ pub struct DeviceConfiguration {
     #[builder(setter(custom))]
     device_regions: Vec<DeviceRegion>,
 
+    #[builder(setter(custom))]
+    interrupt_request_counts: HashMap<InterruptRequestKind, u32>,
+
     #[builder(default = "false")]
     setup_dma: bool,
 }
@@ -108,6 +135,15 @@ pub struct DeviceConfiguration {
 impl DeviceConfigurator {
     pub fn add_device_region(&mut self, region: DeviceRegion) -> &mut Self {
         self.device_regions.get_or_insert(Vec::new()).push(region);
+        self
+    }
+
+    pub fn using_interrupt_requests(
+        &mut self, irq_kind: InterruptRequestKind, count: u32,
+    ) -> &mut Self {
+        self.interrupt_request_counts
+            .get_or_insert(HashMap::new())
+            .insert(irq_kind, count);
         self
     }
 }
@@ -166,6 +202,19 @@ impl DeviceContext {
                 if processed_requests == 0 {
                     break;
                 }
+            }
+
+            Ok(())
+        }
+    }
+
+    pub fn trigger_irq(&self, subindex: u32) -> anyhow::Result<()> {
+        unsafe {
+            let ret = vfu_irq_trigger(self.vfu_ctx, subindex);
+
+            if ret != 0 {
+                let err = Error::last_os_error();
+                return Err(anyhow!("Failed to trigger irq: {}", err));
             }
 
             Ok(())
