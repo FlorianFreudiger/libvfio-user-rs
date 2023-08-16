@@ -191,8 +191,8 @@ impl DeviceConfiguration {
     }
 
     unsafe fn setup_interrupt_requests<T: Device>(&self, ctx: &DeviceContext) -> Result<()> {
-        const CAPABILITY_ID_MSIX: u8 = 0x11;
         const CAPABILITY_ID_MSI: u8 = 0x5;
+        const _CAPABILITY_ID_MSIX: u8 = 0x11;
 
         for (irq_kind, count) in &self.interrupt_request_counts {
             let ret = vfu_setup_device_nr_irqs(ctx.vfu_ctx, irq_kind.to_vfu_type(), *count);
@@ -208,12 +208,9 @@ impl DeviceConfiguration {
 
             // If used, add msi capability
             if let InterruptRequestKind::Msi = irq_kind {
-                // Since libvfio-user doesn't currently support the msi capability,
-                // use workaround to add it: add msix capability and change id to msi
-                // TODO: Be careful when adding further caps since msi cap is longer than msix
+                let mut cap = vec![0u8; 0x18];
+                cap[0] = CAPABILITY_ID_MSI;
 
-                let mut cap = vec![0u8; 12];
-                cap[0] = CAPABILITY_ID_MSIX;
                 let ret =
                     vfu_pci_add_capability(ctx.vfu_ctx, 0, 0, cap.as_mut_ptr() as *mut c_void);
 
@@ -225,10 +222,6 @@ impl DeviceConfiguration {
                         err
                     ));
                 }
-                let offset = ret as usize;
-                let config_space = vfu_pci_get_config_space(ctx.vfu_ctx).as_mut().unwrap();
-
-                config_space.__bindgen_anon_1.raw[offset] = CAPABILITY_ID_MSI;
             }
 
             // TODO: Add MSI-X capability
