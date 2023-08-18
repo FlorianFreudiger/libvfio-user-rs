@@ -1,6 +1,7 @@
 use std::fmt::{Debug, Formatter};
 use std::io::Error;
 use std::mem::size_of;
+use std::os::raw::c_void;
 use std::ptr::null_mut;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 
@@ -10,12 +11,119 @@ use libvfio_user_sys::*;
 
 use crate::DeviceContext;
 
-/// Mapping to a certain guest range, may span multiple mapped regions
 // Debug implemented manually to inspect sgl entries
-pub struct DmaMapping {
-    // Vfu context and sgls are needed for vfu_sgl_put call when mapping is dropped
+pub struct DmaRange {
+    // Vfu context and sgl_buffer is needed for vfu_sg_is_mappable and vfu_sgl_put call
+    // when DmaMapping is dropped
     ctx: *mut vfu_ctx_t,
     sgl_buffer: Vec<u8>,
+
+    size: usize,
+    region_count: usize,
+}
+
+impl DmaRange {
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    pub fn region_count(&self) -> usize {
+        self.region_count
+    }
+
+    pub fn read(&mut self) -> Result<Vec<u8>> {
+        let mut buffer = vec![0u8; self.size];
+
+        let ret = unsafe {
+            vfu_sgl_read(
+                self.ctx,
+                self.sgl_buffer.as_mut_ptr() as *mut dma_sg_t,
+                1,
+                buffer.as_mut_ptr() as *mut c_void,
+            )
+        };
+
+        if ret != 0 {
+            let err = Error::last_os_error();
+            return Err(anyhow!("Failed to read from dma range: {}", err));
+        }
+
+        Ok(buffer)
+    }
+
+    pub fn write(&mut self, buffer: &[u8]) -> Result<()> {
+        ensure!(
+            buffer.len() == self.size,
+            "Must write exact size of dma range"
+        );
+
+        let ret = unsafe {
+            vfu_sgl_write(
+                self.ctx,
+                self.sgl_buffer.as_mut_ptr() as *mut dma_sg_t,
+                1,
+                // Intentional cast from const ptr to mut ptr, contents should not change
+                buffer.as_ptr() as *mut c_void,
+            )
+        };
+
+        if ret != 0 {
+            let err = Error::last_os_error();
+            return Err(anyhow!("Failed to write to dma range: {}", err));
+        }
+
+        Ok(())
+    }
+
+    pub fn is_mappable(&self) -> bool {
+        // Ensure all sgl entries are mappable
+        unsafe {
+            self.sgl_buffer
+                .chunks_exact(dma_sg_size())
+                // Cast from const ptr to mut ptr, should be fine since vfu_sg_is_mappable does not
+                // affect contents (parameter mut because of bindings)
+                .map(|sg| vfu_sg_is_mappable(self.ctx, sg.as_ptr() as *mut dma_sg_t))
+                .all(|b| b)
+        }
+    }
+
+    pub fn into_mapping(mut self) -> Result<DmaMapping> {
+        ensure!(self.is_mappable(), "Dma range is not mappable.");
+
+        let mut iovs: Vec<iovec> = vec![
+            iovec {
+                iov_base: null_mut(),
+                iov_len: 0
+            };
+            self.region_count
+        ];
+
+        let ret = unsafe {
+            vfu_sgl_get(
+                self.ctx,
+                self.sgl_buffer.as_mut_ptr() as *mut dma_sg_t,
+                iovs.as_mut_ptr(),
+                self.region_count,
+                0,
+            )
+        };
+
+        if ret != 0 {
+            let err = Error::last_os_error();
+            return Err(anyhow!("Failed to populate iovec array: {}", err));
+        }
+
+        Ok(DmaMapping {
+            range: self,
+            mapped_regions: iovs,
+        })
+    }
+}
+
+/// Mapping to a certain guest range, may span multiple mapped regions
+#[derive(Debug)]
+pub struct DmaMapping {
+    range: DmaRange,
     mapped_regions: Vec<iovec>,
 }
 
@@ -55,8 +163,8 @@ impl Drop for DmaMapping {
     fn drop(&mut self) {
         unsafe {
             vfu_sgl_put(
-                self.ctx,
-                self.sgl_buffer.as_mut_ptr() as *mut dma_sg_t,
+                self.range.ctx,
+                self.range.sgl_buffer.as_mut_ptr() as *mut dma_sg_t,
                 self.mapped_regions.as_mut_ptr(), // Parameter unused inside vfu_sgl_put
                 self.mapped_regions.len(),
             );
@@ -65,9 +173,9 @@ impl Drop for DmaMapping {
 }
 
 impl DeviceContext {
-    pub fn map_range(
+    pub fn dma_range(
         &mut self, dma_addr: usize, len: usize, max_regions: usize, read: bool, write: bool,
-    ) -> Result<DmaMapping> {
+    ) -> Result<DmaRange> {
         ensure!(
             len > 0,
             "Mapping should not be empty. Skip calling if len == 0."
@@ -87,8 +195,6 @@ impl DeviceContext {
         }
 
         unsafe {
-            // 1. Gather SGL
-
             // dma_sg_t size is only indirectly available, allocate a buffer and do casts instead
             let mut sgl_buffer = vec![0u8; dma_sg_size() * max_regions];
 
@@ -123,42 +229,20 @@ impl DeviceContext {
             }
             let region_count = ret as usize;
 
-            // Ensure all sgl entries are mappable
-            for (i, sg) in sgl_buffer.chunks_exact_mut(dma_sg_size()).enumerate() {
-                ensure!(
-                    vfu_sg_is_mappable(self.vfu_ctx, sg.as_mut_ptr() as *mut dma_sg_t),
-                    "Sg entry {} is not mappable",
-                    i
-                );
-            }
-
-            // 2. Collect iovec to each region
-
-            let mut iovs: Vec<iovec> = vec![
-                iovec {
-                    iov_base: null_mut(),
-                    iov_len: 0
-                };
-                region_count
-            ];
-            let ret = vfu_sgl_get(
-                self.vfu_ctx,
-                sgl_buffer.as_mut_ptr() as *mut dma_sg_t,
-                iovs.as_mut_ptr(),
-                region_count,
-                0,
-            );
-            if ret != 0 {
-                let err = Error::last_os_error();
-                return Err(anyhow!("Failed to populate iovec array: {}", err));
-            }
-
-            Ok(DmaMapping {
+            Ok(DmaRange {
                 ctx: self.vfu_ctx,
                 sgl_buffer,
-                mapped_regions: iovs,
+                size: len,
+                region_count,
             })
         }
+    }
+
+    pub fn dma_map(
+        &mut self, dma_addr: usize, len: usize, max_regions: usize, read: bool, write: bool,
+    ) -> Result<DmaMapping> {
+        self.dma_range(dma_addr, len, max_regions, read, write)?
+            .into_mapping()
     }
 }
 
@@ -192,7 +276,7 @@ impl DmaSgDebug {
     }
 }
 
-impl Debug for DmaMapping {
+impl Debug for DmaRange {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         unsafe {
             // Try to use list of DmaSgDebug instead of just printing the sgl_buffer byte vec
@@ -217,7 +301,8 @@ impl Debug for DmaMapping {
             } else {
                 format.field("sgl_buffer", &self.sgl_buffer)
             }
-            .field("mapped_regions", &self.mapped_regions)
+            .field("size", &self.size)
+            .field("region_count", &self.region_count)
             .finish()
         }
     }
