@@ -157,17 +157,10 @@ impl DeviceConfiguration {
 #[derive(Debug)]
 pub struct DeviceContext {
     vfu_ctx: *mut vfu_ctx_t,
-    // Base address to length map of registered dma regions
-    dma_regions: HashMap<usize, usize>,
+    dma_enabled: bool,
 }
 
 impl DeviceContext {
-    // Expose read-only view of dma_regions
-    /// Get registered dma regions, a map of base guest addresses to their lengths
-    pub fn dma_regions(&self) -> &HashMap<usize, usize> {
-        &self.dma_regions
-    }
-
     /// Attach to the transport, if non-blocking it may return None and needs to be called again
     pub fn attach(&self) -> anyhow::Result<Option<()>> {
         unsafe {

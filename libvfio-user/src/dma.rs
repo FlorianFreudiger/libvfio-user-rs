@@ -182,8 +182,8 @@ impl DeviceContext {
         );
         ensure!(max_regions > 0, "At least 1 region is required.");
         ensure!(
-            !self.dma_regions.is_empty(),
-            "No mappable regions registered, have you called .setup_dma(true) during configuration?"
+            self.dma_enabled,
+            "Dma not enabled, have you called .setup_dma(true) during configuration?"
         );
 
         let mut prot = 0;
