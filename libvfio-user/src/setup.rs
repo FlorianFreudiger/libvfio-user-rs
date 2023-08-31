@@ -5,6 +5,7 @@ use std::io::Error;
 use std::os::raw::{c_int, c_void};
 use std::os::unix::fs::FileTypeExt;
 use std::ptr::null_mut;
+use std::rc::Rc;
 
 use anyhow::{anyhow, Context, Result};
 
@@ -55,7 +56,7 @@ impl DeviceConfigurator {
 }
 
 impl DeviceConfiguration {
-    unsafe fn setup_create_device<T: Device>(&self) -> Result<Box<T>> {
+    unsafe fn setup_create<T: Device>(&self) -> Result<(Box<T>, Rc<DeviceContext>)> {
         if self.overwrite_socket {
             if let Ok(metadata) = fs::metadata(&self.socket_path) {
                 if metadata.file_type().is_socket() {
@@ -63,11 +64,12 @@ impl DeviceConfiguration {
                 }
             }
         }
-
-        let mut device = Box::new(T::new(DeviceContext {
+        let ctx = Rc::new(DeviceContext {
             vfu_ctx: null_mut(),
             dma_enabled: self.setup_dma,
-        }));
+        });
+
+        let mut device = Box::new(T::new(ctx.clone()));
 
         let socket_path = CString::new(
             self.socket_path
@@ -98,8 +100,11 @@ impl DeviceConfiguration {
             return Err(anyhow!("Failed to create VFIO context: {}", err));
         }
 
-        device.ctx_mut().vfu_ctx = raw_ctx;
-        Ok(device)
+        // Unsafe but easy way to update ctx.vfu_ctx without requiring interior mutability,
+        // might make safe in the future
+        (&mut *(Rc::as_ptr(&ctx) as *mut DeviceContext)).vfu_ctx = raw_ctx;
+
+        Ok((device, ctx))
     }
 
     unsafe fn setup_log<T: Device>(&self, ctx: &DeviceContext) -> Result<()> {
@@ -270,16 +275,15 @@ impl DeviceConfiguration {
     }
 
     pub(crate) unsafe fn setup_all<T: Device>(&self) -> Result<Box<T>> {
-        let device: Box<T> = self.setup_create_device()?;
-        let ctx = device.ctx();
+        let (device, ctx) = self.setup_create()?;
 
-        self.setup_log::<T>(ctx)?;
-        self.setup_pci::<T>(ctx)?;
-        self.setup_device_regions::<T>(ctx)?;
-        self.setup_interrupt_requests::<T>(ctx)?;
+        self.setup_log::<T>(&*ctx)?;
+        self.setup_pci::<T>(&*ctx)?;
+        self.setup_device_regions::<T>(&*ctx)?;
+        self.setup_interrupt_requests::<T>(&*ctx)?;
         // TODO: Capabilities
-        self.setup_other_callbacks::<T>(ctx)?;
-        self.setup_realize::<T>(ctx)?;
+        self.setup_other_callbacks::<T>(&*ctx)?;
+        self.setup_realize::<T>(&*ctx)?;
 
         Ok(device)
     }

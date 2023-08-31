@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use anyhow::anyhow;
 
@@ -231,9 +232,7 @@ impl AsRawFd for DeviceContext {
 
 #[allow(unused_variables)]
 pub trait Device {
-    fn new(ctx: DeviceContext) -> Self;
-    fn ctx(&self) -> &DeviceContext;
-    fn ctx_mut(&mut self) -> &mut DeviceContext;
+    fn new(ctx: Rc<DeviceContext>) -> Self;
 
     fn log(&self, level: i32, msg: &str);
 

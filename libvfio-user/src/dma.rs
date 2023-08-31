@@ -174,7 +174,7 @@ impl Drop for DmaMapping {
 
 impl DeviceContext {
     pub fn dma_range(
-        &mut self, dma_addr: usize, len: usize, max_regions: usize, read: bool, write: bool,
+        &self, dma_addr: usize, len: usize, max_regions: usize, read: bool, write: bool,
     ) -> Result<DmaRange> {
         ensure!(
             len > 0,
@@ -239,7 +239,7 @@ impl DeviceContext {
     }
 
     pub fn dma_map(
-        &mut self, dma_addr: usize, len: usize, max_regions: usize, read: bool, write: bool,
+        &self, dma_addr: usize, len: usize, max_regions: usize, read: bool, write: bool,
     ) -> Result<DmaMapping> {
         self.dma_range(dma_addr, len, max_regions, read, write)?
             .into_mapping()
