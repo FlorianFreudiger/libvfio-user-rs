@@ -3,7 +3,7 @@ extern crate derive_builder;
 
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -221,6 +221,12 @@ impl Drop for DeviceContext {
         unsafe {
             vfu_destroy_ctx(self.vfu_ctx);
         }
+    }
+}
+
+impl AsFd for DeviceContext {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        unsafe { BorrowedFd::borrow_raw(self.as_raw_fd()) }
     }
 }
 
