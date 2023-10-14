@@ -33,6 +33,15 @@ impl DmaRange {
 
     pub fn read(&mut self) -> Result<Vec<u8>> {
         let mut buffer = vec![0u8; self.size];
+        self.read_into(buffer.as_mut_slice())?;
+        Ok(buffer)
+    }
+
+    pub fn read_into(&mut self, buffer: &mut [u8]) -> Result<()> {
+        ensure!(
+            buffer.len() == self.size,
+            "Read buffer must have same size as dma range"
+        );
 
         let ret = unsafe {
             vfu_sgl_read(
@@ -48,7 +57,7 @@ impl DmaRange {
             return Err(anyhow!("Failed to read from dma range: {}", err));
         }
 
-        Ok(buffer)
+        Ok(())
     }
 
     pub fn write(&mut self, buffer: &[u8]) -> Result<()> {
@@ -137,6 +146,50 @@ impl DmaMapping {
         let region = self.mapped_regions[region_index];
         unsafe { from_raw_parts_mut(region.iov_base as *mut u8, region.iov_len) }
         // We do not need to call vfu_sgl_mark_dirty since we call vfu_sgl_put on drop
+    }
+
+    pub fn read_volatile(
+        &self, region_index: usize, length: usize, offset: usize,
+    ) -> Result<Vec<u8>> {
+        let mut buffer = vec![0u8; length];
+        self.read_into_volatile(region_index, buffer.as_mut_slice(), offset)?;
+        Ok(buffer)
+    }
+
+    pub fn read_into_volatile(
+        &self, region_index: usize, buffer: &mut [u8], offset: usize,
+    ) -> Result<()> {
+        let region = self.mapped_regions[region_index];
+        ensure!(
+            buffer.len() + offset <= region.iov_len,
+            "Length + offset exceed region length"
+        );
+
+        unsafe {
+            let ptr = (region.iov_base as *const u8).offset(offset as isize);
+            for i in 0..buffer.len() {
+                buffer[i] = ptr.offset(i as isize).read_volatile();
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn write_volatile(&self, region_index: usize, buffer: &[u8], offset: usize) -> Result<()> {
+        let region = self.mapped_regions[region_index];
+        ensure!(
+            buffer.len() + offset <= region.iov_len,
+            "Length + offset exceed region length"
+        );
+
+        unsafe {
+            let ptr = (region.iov_base as *mut u8).offset(offset as isize);
+            for i in 0..buffer.len() {
+                ptr.offset(i as isize).write_volatile(buffer[i]);
+            }
+        }
+
+        Ok(())
     }
 
     pub fn region_length(&self, region_index: usize) -> usize {
