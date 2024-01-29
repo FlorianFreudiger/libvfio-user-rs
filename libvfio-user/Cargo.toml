@@ -9,9 +9,9 @@ license = "BSD-3-Clause"
 [dependencies]
 libvfio-user-sys = { path = "../libvfio-user-sys", default-features = false }
 
-anyhow = "1.0.75"
-derive_builder = "0.12.0"
-errno = "0.3.5"
+anyhow = "1.0.79"
+derive_builder = "0.13.0"
+errno = "0.3.8"
 
 # Passthrough libvfio-user-sys features
 [features]
